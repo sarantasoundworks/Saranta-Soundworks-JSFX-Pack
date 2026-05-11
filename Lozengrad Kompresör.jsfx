@@ -1,0 +1,233 @@
+desc:Lozengrad Kompresör (Saranta Soundworks)
+//tags: dynamics compressor limiter bus vca
+//author: Saranta Soundworks
+
+slider1:-.1<-50,-.1,.1>Threshold (dB)
+slider2:1<1,20,.1>Ratio
+slider3:20<0,500,.1>Attack (ms)
+slider4:200<0,1000,.1>Release (ms)
+slider5:1<0,2,1{Hard,Medium,Soft}>Knee
+slider6:1<0,2,1{Normal,Medium,Loud}>Detector Thrust
+slider7:0<0,1,1{Feedforward,Feedback}>Tone Type
+slider8:1<0,2,1{Low,Normal,High}>Headroom
+slider9:0<-12,12,.1>Make-Up Gain (dB)
+slider10:100<0,100,1>Mix (%)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+c = 8.65617025;
+
+gain = 1;
+seekGain = 1;
+
+env = 0;
+
+gr_meter = 1;
+gr_meter_decay = exp(-3 / (srate * 0.5));
+
+headroom_in = 1;
+headroom_out = 1;
+
+// IIR sidechain filter delay lines (biquad: x[n-1], x[n-2], y[n-1], y[n-2])
+sc_x1 = 0; sc_x2 = 0;
+sc_y1 = 0; sc_y2 = 0;
+
+// Saturation
+sat_drive = 1.08;
+e2x = exp(2 * sat_drive);
+sat_norm = (e2x - 1) / (e2x + 1);
+
+@slider
+threshDB = slider1;
+thresh = exp(threshDB / c);
+
+ratio_raw = slider2;
+ratio_exp = exp((ratio_raw - 1) / 19 * log(20));
+ratio = 1 / ratio_exp;
+
+attackTime = max(slider3 / 1000, 0.0001);
+releaseTime = max(slider4 / 1000, 0.0001);
+attack = exp(-1 / (attackTime * srate));
+release = exp(-1 / (releaseTime * srate));
+
+// Dual-stage release: fast coefficient for deep GR recovery
+// 4x faster release when deep in compression, blends to user setting near unity
+release_fast = exp(-1 / (max(releaseTime * 0.25, 0.005) * srate));
+
+knee_mode = slider5;
+knee_mode == 0 ? kneeDB = 0;
+knee_mode == 1 ? kneeDB = 9;
+knee_mode == 2 ? kneeDB = 18;
+knee_low = exp((threshDB - kneeDB / 2) / c);
+knee_high = exp((threshDB + kneeDB / 2) / c);
+kneeDB == 0 ? knee_low = thresh;
+kneeDB == 0 ? knee_high = thresh;
+
+// IIR Thrust Filter - Biquad high-pass on detector path
+// Shapes which frequencies trigger compression
+// Normal = bypass, Medium = HP 150Hz Q0.7, Loud = HP 200Hz Q0.5
+thrust_mode = slider6;
+thrust_mode == 0 ? (
+  sc_b0 = 1; sc_b1 = 0; sc_b2 = 0;
+  sc_a1 = 0; sc_a2 = 0;
+);
+thrust_mode == 1 ? (
+  fc = 150;
+  w0 = 2 * $pi * fc / srate;
+  Q = 0.707;
+  alpha = sin(w0) / (2 * Q);
+  cos_w0 = cos(w0);
+  sc_b0 = (1 + cos_w0) / 2 / (1 + alpha);
+  sc_b1 = -(1 + cos_w0) / (1 + alpha);
+  sc_b2 = (1 + cos_w0) / 2 / (1 + alpha);
+  sc_a1 = -2 * cos_w0 / (1 + alpha);
+  sc_a2 = (1 - alpha) / (1 + alpha);
+);
+thrust_mode == 2 ? (
+  fc = 200;
+  w0 = 2 * $pi * fc / srate;
+  Q = 0.5;
+  alpha = sin(w0) / (2 * Q);
+  cos_w0 = cos(w0);
+  sc_b0 = (1 + cos_w0) / 2 / (1 + alpha);
+  sc_b1 = -(1 + cos_w0) / (1 + alpha);
+  sc_b2 = (1 + cos_w0) / 2 / (1 + alpha);
+  sc_a1 = -2 * cos_w0 / (1 + alpha);
+  sc_a2 = (1 - alpha) / (1 + alpha);
+);
+
+tone_type = slider7;
+
+headroom_mode = slider8;
+headroom_mode == 0 ? (headroom_in = exp(4.5 / c); headroom_out = exp(-4.5 / c));
+headroom_mode == 1 ? (headroom_in = 1; headroom_out = 1);
+headroom_mode == 2 ? (headroom_in = exp(-4.5 / c); headroom_out = exp(4.5 / c));
+
+manual_makeup = slider9;
+
+mix = slider10 / 100;
+
+volume = exp(manual_makeup / c) * headroom_out;
+
+@sample
+spl0_orig = spl0;
+spl1_orig = spl1;
+
+spl0 *= headroom_in;
+spl1 *= headroom_in;
+
+sig = max(abs(spl0), abs(spl1));
+
+// IIR Thrust Filter - applies Biquad EQ to detector signal path
+// Normal: bypass (raw level), Medium: HP 150Hz, Loud: HP 200Hz
+// Bass frequencies are attenuated in detection, preventing kick/bass
+// from over-triggering the compressor
+thrust_mode == 0 ? (
+  det = sig;
+) : (
+  sc_in = sig;
+  sc_out = sc_b0 * sc_in + sc_b1 * sc_x1 + sc_b2 * sc_x2 - sc_a1 * sc_y1 - sc_a2 * sc_y2;
+  sc_x2 = sc_x1; sc_x1 = sc_in;
+  sc_y2 = sc_y1; sc_y1 = sc_out;
+  det = abs(sc_out);
+);
+
+// Feedback mode: detector sees compressed output (post-gain)
+// Creates smoother, more musical compression with natural harmonics
+tone_type == 1 ? (
+  det_fb = det * gain;
+  det_fb > env ? env = attack * env + (1 - attack) * det_fb : env = release * env + (1 - release) * det_fb;
+  det = max(det, env);
+) : (
+  env = 0;
+);
+
+// Dual-stage release: program-dependent release curve
+// Deep GR -> fast release (4x) for quick transient recovery
+// Shallow GR -> slow release (user setting) to avoid pumping
+// Prevents compressor from "pumping" on fast transients like drums
+gr_depth = 1 - gain;
+gr_depth < 0 ? gr_depth = 0;
+gr_depth > 1 ? gr_depth = 1;
+release_eff = release_fast * gr_depth + release * (1 - gr_depth);
+
+// Knee processing: smooth transition around threshold
+// Hard = brick wall, Medium = 9dB curve, Soft = 18dB curve
+det > knee_low && det < knee_high ? (
+  knee_pos = (log(det) * c - (threshDB - kneeDB / 2)) / kneeDB;
+  eff_ratio = 1 + (ratio - 1) * knee_pos;
+  seekGain = exp((threshDB + (log(det) * c - threshDB) * eff_ratio) / c) / det;
+) : (
+  seekGain = det > thresh ? exp((threshDB + (log(det) * c - threshDB) * ratio) / c) / det : 1;
+);
+
+// Apply gain with asymmetric attack/release envelope
+gain = gain > seekGain ? max(gain * attack, seekGain) : min(gain / release_eff, seekGain);
+
+spl0 *= gain * volume;
+spl1 *= gain * volume;
+
+// Analog output stage saturation - fixed subtle tanh soft-clipper
+// Drive 1.08x (~0.7dB) adds barely-perceptible even/odd harmonics
+// Only colors signal peaks, transparent at normal levels
+s0 = spl0 * sat_drive;
+s1 = spl1 * sat_drive;
+e2x0 = exp(2 * s0);
+e2x1 = exp(2 * s1);
+spl0 = (e2x0 - 1) / (e2x0 + 1) / sat_norm;
+spl1 = (e2x1 - 1) / (e2x1 + 1) / sat_norm;
+
+// Parallel mix: blend compressed signal with dry
+mix < 1 ? (
+  spl0 = spl0 * mix + spl0_orig * (1 - mix);
+  spl1 = spl1 * mix + spl1_orig * (1 - mix);
+);
+
+// Gain reduction meter: tracks deepest GR, smooth decay
+gr = gain < 1 ? log(gain) * c : 0;
+gr_meter = gr < gr_meter ? gr : gr_meter * gr_meter_decay + gr * (1 - gr_meter_decay);
+gr_meter > 0 ? gr_meter = 0;
+
+@block
+ext_gr_meter = gr_meter < -150 ? -150 : gr_meter;
+
+@gfx 0 32
+
+  gr_meter *= exp(-1 / (srate * 0.3));
+
+  gfx_r = 1; gfx_g = 0; gfx_b = 0; gfx_a = 0.8;
+
+  meter_h = min(gfx_h, 32);
+  xscale = gfx_w / 24;
+
+  gfx_y = 0;
+  gfx_x = gfx_w + gr_meter * xscale;
+  gfx_rectto(gfx_w, meter_h);
+
+  gfx_r = 1; gfx_g = 1; gfx_b = 1; gfx_a = 0.6;
+
+  g = -3;
+  while(
+    gfx_x = gfx_w + g * xscale;
+    gfx_x >= 0 && gfx_x < gfx_w ? (
+      gfx_y = 0;
+      gfx_lineto(gfx_x, meter_h, 0);
+      gfx_y = meter_h - gfx_texth;
+      gfx_drawnumber(g, 0);
+      gfx_drawchar($'d');
+      gfx_drawchar($'B');
+    );
+    g -= 3;
+    g >= -24;
+  );
+
+  gfx_a = 1;
+  gfx_x = 2;
+  gfx_y = meter_h / 2 - gfx_texth / 2;
+  gfx_drawnumber(gr_meter, 1);
+  gfx_drawchar($'d');
+  gfx_drawchar($'B');

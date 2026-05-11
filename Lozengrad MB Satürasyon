@@ -1,0 +1,335 @@
+desc:Lozengrad MB Satürasyon (Saranta Soundworks)
+//author: Saranta Soundworks
+
+// --- Controls ---
+slider1:0<-24,24,0.1>Input Gain (dB)
+
+slider2:150<50,500,1>Low/Mid Crossover (Hz)
+slider3:3000<800,8000,1>Mid/High Crossover (Hz)
+
+
+
+slider4:0<0,24,0.1>Low Drive (dB)
+slider5:0<-24,24,0.1>Low Band Gain (dB)
+slider6:0<0,1,1{Off,On}>Low Auto Gain
+
+
+
+slider7:0<0,24,0.1>Mid Drive (dB)
+slider8:0<-24,24,0.1>Mid Band Gain (dB)
+slider9:0<0,1,1{Off,On}>Mid Auto Gain
+
+
+
+slider10:0<0,24,0.1>High Drive (dB)
+slider11:0<-24,24,0.1>High Band Gain (dB)
+slider12:0<0,1,1{Off,On}>High Auto Gain
+
+
+
+slider13:0<-24,24,0.1>Output Volume (dB)
+slider14:100<0,100,1>Mix (%)
+
+
+
+slider15:0<0,3,1{Soft Clip,Tube,Tape,Hard Clip}>Saturation Mode
+slider16:0<0,3,1{All Bands,Solo Low,Solo Mid,Solo High}>Listen Mode
+slider17:0<0,2,1{Off,2x,4x}>Oversampling
+
+@init
+pi = 3.14159265359;
+ext_tail_size = -1;
+
+// Initialize all filter state variables to 0
+s_l_lp1_1 = 0; s_l_lp1_2 = 0;
+s_l_lp2_1 = 0; s_l_lp2_2 = 0;
+s_l_hp1_1 = 0; s_l_hp1_2 = 0;
+s_l_hp2_1 = 0; s_l_hp2_2 = 0;
+s_m_lp1_1 = 0; s_m_lp1_2 = 0;
+s_m_lp2_1 = 0; s_m_lp2_2 = 0;
+s_m_hp1_1 = 0; s_m_hp1_2 = 0;
+s_m_hp2_1 = 0; s_m_hp2_2 = 0;
+s_r_lp1_1 = 0; s_r_lp1_2 = 0;
+s_r_lp2_1 = 0; s_r_lp2_2 = 0;
+s_r_hp1_1 = 0; s_r_hp1_2 = 0;
+s_r_hp2_1 = 0; s_r_hp2_2 = 0;
+s_rm_lp1_1 = 0; s_rm_lp1_2 = 0;
+s_rm_lp2_1 = 0; s_rm_lp2_2 = 0;
+s_rm_hp1_1 = 0; s_rm_hp1_2 = 0;
+s_rm_hp2_1 = 0; s_rm_hp2_2 = 0;
+
+// Auto gain state
+auto_gain_L = 1;
+auto_gain_M = 1;
+auto_gain_H = 1;
+
+// Biquad Filter Function for Linkwitz-Riley
+function calc_biquad(freq, q, type, os) (
+w0 = 2 * pi * freq / (srate * os);
+alpha = sin(w0) / (2 * q);
+cosw0 = cos(w0);
+
+type == 0 ? ( // Lowpass
+b0 = (1 - cosw0) / 2;
+b1 = 1 - cosw0;
+b2 = (1 - cosw0) / 2;
+) : ( // Highpass
+b0 = (1 + cosw0) / 2;
+b1 = -(1 + cosw0);
+b2 = (1 + cosw0) / 2;
+);
+
+a0 = 1 + alpha;
+a1 = -2 * cosw0;
+a2 = 1 - alpha;
+
+a0_inv = 1 / a0;
+b0 *= a0_inv; b1 *= a0_inv; b2 *= a0_inv;
+a1 *= a0_inv; a2 *= a0_inv;
+);
+
+// Process Biquad - uses global state variables (passed as s1_name, s2_name pattern)
+// Inline the biquad processing instead of using a function to avoid state issues
+
+// Saturation Functions - fixed to return values properly
+function sat_soft(x, drive) (
+g = max(drive, 1);
+y = x * g;
+y = y / (1 + abs(y));
+y;
+);
+
+function sat_tube(x, drive) (
+g = max(drive, 1);
+y = x * g;
+y = y > 0 ? (1 - exp(-y)) : (-1 + exp(y));
+y;
+);
+
+function sat_tape(x, drive) (
+g = max(drive, 1);
+y = x * g;
+y = (2 / pi) * atan(y);
+y;
+);
+
+function sat_hard(x, drive) (
+g = max(drive, 1);
+y = x * g;
+y = min(max(y, -1), 1);
+y;
+);
+
+@slider
+mix_factor = slider14 / 100;
+out_gain = 10 ^ (slider13 / 20);
+input_gain = 10 ^ (slider1 / 20);
+
+drive_L = 10 ^ (slider4 / 20);
+drive_M = 10 ^ (slider7 / 20);
+drive_H = 10 ^ (slider10 / 20);
+
+band_gain_L = 10 ^ (slider5 / 20);
+band_gain_M = 10 ^ (slider8 / 20);
+band_gain_H = 10 ^ (slider11 / 20);
+
+auto_gain_L_enable = slider6;
+auto_gain_M_enable = slider9;
+auto_gain_H_enable = slider12;
+
+mode = slider15;
+listen = slider16;
+os_factor = (slider17 == 0) ? 1 : (slider17 == 1) ? 2 : 4;
+
+// Calculate Crossover Coefficients
+q_butter = 0.7071;
+
+// Low/Mid Xover
+calc_biquad(slider2, q_butter, 0, os_factor); // LP
+lp1_b0=b0; lp1_b1=b1; lp1_b2=b2; lp1_a1=a1; lp1_a2=a2;
+calc_biquad(slider2, q_butter, 1, os_factor); // HP
+hp1_b0=b0; hp1_b1=b1; hp1_b2=b2; hp1_a1=a1; hp1_a2=a2;
+
+// Mid/High Xover
+calc_biquad(slider3, q_butter, 0, os_factor); // LP
+lp2_b0=b0; lp2_b1=b1; lp2_b2=b2; lp2_a1=a1; lp2_a2=a2;
+calc_biquad(slider3, q_butter, 1, os_factor); // HP
+hp2_b0=b0; hp2_b1=b1; hp2_b2=b2; hp2_a1=a1; hp2_a2=a2;
+
+@sample
+orig_spl0 = spl0;
+orig_spl1 = spl1;
+
+// Apply input gain
+spl0 *= input_gain;
+spl1 *= input_gain;
+
+// Oversampling loop
+os_spl0 = 0;
+os_spl1 = 0;
+i = 0;
+while(i < os_factor) (
+
+in_0 = spl0;
+in_1 = spl1;
+
+// --- Left Channel Crossover ---
+// LP1
+out = lp1_b0 * in_0 + s_l_lp1_1;
+s_l_lp1_1 = lp1_b1 * in_0 - lp1_a1 * out + s_l_lp1_2;
+s_l_lp1_2 = lp1_b2 * in_0 - lp1_a2 * out;
+l_lp_1 = out;
+// LP2 (cascade)
+out = lp1_b0 * l_lp_1 + s_l_lp2_1;
+s_l_lp2_1 = lp1_b1 * l_lp_1 - lp1_a1 * out + s_l_lp2_2;
+s_l_lp2_2 = lp1_b2 * l_lp_1 - lp1_a2 * out;
+l_lp_2 = out;
+
+// HP1
+out = hp1_b0 * in_0 + s_l_hp1_1;
+s_l_hp1_1 = hp1_b1 * in_0 - hp1_a1 * out + s_l_hp1_2;
+s_l_hp1_2 = hp1_b2 * in_0 - hp1_a2 * out;
+l_hp_1 = out;
+// HP2 (cascade)
+out = hp1_b0 * l_hp_1 + s_l_hp2_1;
+s_l_hp2_1 = hp1_b1 * l_hp_1 - hp1_a1 * out + s_l_hp2_2;
+s_l_hp2_2 = hp1_b2 * l_hp_1 - hp1_a2 * out;
+l_hp_2 = out;
+
+band_L_L = l_lp_2;
+mid_high_L = l_hp_2;
+
+// Split Mid and High
+// LP2 for mid
+out = lp2_b0 * mid_high_L + s_m_lp1_1;
+s_m_lp1_1 = lp2_b1 * mid_high_L - lp2_a1 * out + s_m_lp1_2;
+s_m_lp1_2 = lp2_b2 * mid_high_L - lp2_a2 * out;
+m_lp_1 = out;
+out = lp2_b0 * m_lp_1 + s_m_lp2_1;
+s_m_lp2_1 = lp2_b1 * m_lp_1 - lp2_a1 * out + s_m_lp2_2;
+s_m_lp2_2 = lp2_b2 * m_lp_1 - lp2_a2 * out;
+m_lp_2 = out;
+
+// HP2 for high
+out = hp2_b0 * mid_high_L + s_m_hp1_1;
+s_m_hp1_1 = hp2_b1 * mid_high_L - hp2_a1 * out + s_m_hp1_2;
+s_m_hp1_2 = hp2_b2 * mid_high_L - hp2_a2 * out;
+m_hp_1 = out;
+out = hp2_b0 * m_hp_1 + s_m_hp2_1;
+s_m_hp2_1 = hp2_b1 * m_hp_1 - hp2_a1 * out + s_m_hp2_2;
+s_m_hp2_2 = hp2_b2 * m_hp_1 - hp2_a2 * out;
+m_hp_2 = out;
+
+band_M_L = m_lp_2;
+band_H_L = m_hp_2;
+
+// --- Right Channel Crossover ---
+// LP1
+out = lp1_b0 * in_1 + s_r_lp1_1;
+s_r_lp1_1 = lp1_b1 * in_1 - lp1_a1 * out + s_r_lp1_2;
+s_r_lp1_2 = lp1_b2 * in_1 - lp1_a2 * out;
+r_lp_1 = out;
+out = lp1_b0 * r_lp_1 + s_r_lp2_1;
+s_r_lp2_1 = lp1_b1 * r_lp_1 - lp1_a1 * out + s_r_lp2_2;
+s_r_lp2_2 = lp1_b2 * r_lp_1 - lp1_a2 * out;
+r_lp_2 = out;
+
+// HP1
+out = hp1_b0 * in_1 + s_r_hp1_1;
+s_r_hp1_1 = hp1_b1 * in_1 - hp1_a1 * out + s_r_hp1_2;
+s_r_hp1_2 = hp1_b2 * in_1 - hp1_a2 * out;
+r_hp_1 = out;
+out = hp1_b0 * r_hp_1 + s_r_hp2_1;
+s_r_hp2_1 = hp1_b1 * r_hp_1 - hp1_a1 * out + s_r_hp2_2;
+s_r_hp2_2 = hp1_b2 * r_hp_1 - hp1_a2 * out;
+r_hp_2 = out;
+
+band_L_R = r_lp_2;
+mid_high_R = r_hp_2;
+
+// LP2 for mid
+out = lp2_b0 * mid_high_R + s_rm_lp1_1;
+s_rm_lp1_1 = lp2_b1 * mid_high_R - lp2_a1 * out + s_rm_lp1_2;
+s_rm_lp1_2 = lp2_b2 * mid_high_R - lp2_a2 * out;
+rm_lp_1 = out;
+out = lp2_b0 * rm_lp_1 + s_rm_lp2_1;
+s_rm_lp2_1 = lp2_b1 * rm_lp_1 - lp2_a1 * out + s_rm_lp2_2;
+s_rm_lp2_2 = lp2_b2 * rm_lp_1 - lp2_a2 * out;
+rm_lp_2 = out;
+
+// HP2 for high
+out = hp2_b0 * mid_high_R + s_rm_hp1_1;
+s_rm_hp1_1 = hp2_b1 * mid_high_R - hp2_a1 * out + s_rm_hp1_2;
+s_rm_hp1_2 = hp2_b2 * mid_high_R - hp2_a2 * out;
+rm_hp_1 = out;
+out = hp2_b0 * rm_hp_1 + s_rm_hp2_1;
+s_rm_hp2_1 = hp2_b1 * rm_hp_1 - hp2_a1 * out + s_rm_hp2_2;
+s_rm_hp2_2 = hp2_b2 * rm_hp_1 - hp2_a2 * out;
+rm_hp_2 = out;
+
+band_M_R = rm_lp_2;
+band_H_R = rm_hp_2;
+
+// --- Saturation Processing ---
+mode == 0 ? (
+sat_L_L = sat_soft(band_L_L, drive_L); sat_M_L = sat_soft(band_M_L, drive_M); sat_H_L = sat_soft(band_H_L, drive_H);
+sat_L_R = sat_soft(band_L_R, drive_L); sat_M_R = sat_soft(band_M_R, drive_M); sat_H_R = sat_soft(band_H_R, drive_H);
+) : mode == 1 ? (
+sat_L_L = sat_tube(band_L_L, drive_L); sat_M_L = sat_tube(band_M_L, drive_M); sat_H_L = sat_tube(band_H_L, drive_H);
+sat_L_R = sat_tube(band_L_R, drive_L); sat_M_R = sat_tube(band_M_R, drive_M); sat_H_R = sat_tube(band_H_R, drive_H);
+) : mode == 2 ? (
+sat_L_L = sat_tape(band_L_L, drive_L); sat_M_L = sat_tape(band_M_L, drive_M); sat_H_L = sat_tape(band_H_L, drive_H);
+sat_L_R = sat_tape(band_L_R, drive_L); sat_M_R = sat_tape(band_M_R, drive_M); sat_H_R = sat_tape(band_H_R, drive_H);
+) : (
+sat_L_L = sat_hard(band_L_L, drive_L); sat_M_L = sat_hard(band_M_L, drive_M); sat_H_L = sat_hard(band_H_L, drive_H);
+sat_L_R = sat_hard(band_L_R, drive_L); sat_M_R = sat_hard(band_M_R, drive_M); sat_H_R = sat_hard(band_H_R, drive_H);
+);
+
+// --- Auto Gain (RMS-based envelope follower) ---
+auto_gain_L_enable ? (
+rms_in = sqrt((band_L_L * band_L_L + band_L_R * band_L_R) * 0.5 + 0.000001);
+rms_out = sqrt((sat_L_L * sat_L_L + sat_L_R * sat_L_R) * 0.5 + 0.000001);
+auto_gain_L = auto_gain_L * 0.999 + (rms_in / max(rms_out, 0.000001)) * 0.001;
+) : auto_gain_L = 1;
+
+auto_gain_M_enable ? (
+rms_in = sqrt((band_M_L * band_M_L + band_M_R * band_M_R) * 0.5 + 0.000001);
+rms_out = sqrt((sat_M_L * sat_M_L + sat_M_R * sat_M_R) * 0.5 + 0.000001);
+auto_gain_M = auto_gain_M * 0.999 + (rms_in / max(rms_out, 0.000001)) * 0.001;
+) : auto_gain_M = 1;
+
+auto_gain_H_enable ? (
+rms_in = sqrt((band_H_L * band_H_L + band_H_R * band_H_R) * 0.5 + 0.000001);
+rms_out = sqrt((sat_H_L * sat_H_L + sat_H_R * sat_H_R) * 0.5 + 0.000001);
+auto_gain_H = auto_gain_H * 0.999 + (rms_in / max(rms_out, 0.000001)) * 0.001;
+) : auto_gain_H = 1;
+
+// Apply auto gain + manual band gain
+sat_L_L *= auto_gain_L * band_gain_L;
+sat_L_R *= auto_gain_L * band_gain_L;
+sat_M_L *= auto_gain_M * band_gain_M;
+sat_M_R *= auto_gain_M * band_gain_M;
+sat_H_L *= auto_gain_H * band_gain_H;
+sat_H_R *= auto_gain_H * band_gain_H;
+
+// --- Listen Mode (Solo) ---
+listen == 1 ? ( sat_M_L=0; sat_H_L=0; sat_M_R=0; sat_H_R=0; ) : // Solo Low
+listen == 2 ? ( sat_L_L=0; sat_H_L=0; sat_L_R=0; sat_H_R=0; ) : // Solo Mid
+listen == 3 ? ( sat_L_L=0; sat_M_L=0; sat_L_R=0; sat_M_R=0; );  // Solo High
+
+// Sum bands
+proc_0 = sat_L_L + sat_M_L + sat_H_L;
+proc_1 = sat_L_R + sat_M_R + sat_H_R;
+
+os_spl0 += proc_0;
+os_spl1 += proc_1;
+i += 1;
+);
+
+// Average oversampled samples
+wet_spl0 = (os_spl0 / os_factor) * out_gain;
+wet_spl1 = (os_spl1 / os_factor) * out_gain;
+
+// Dry/Wet Mix
+spl0 = (orig_spl0 * (1 - mix_factor)) + (wet_spl0 * mix_factor);
+spl1 = (orig_spl1 * (1 - mix_factor)) + (wet_spl1 * mix_factor);
