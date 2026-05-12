@@ -1,0 +1,408 @@
+desc:Lozengrad Balans EQ
+
+slider1:0<0,7,1{Band 1,Band 2,Band 3,Band 4,Band 5,Band 6,Band 7,Band 8}>Band
+slider2:4<0,4,1{HPF,LPF,Low Shelf,High Shelf,Bell}>Type
+slider3:0.5<0,1,0.001>Freq (Hz)
+slider4:0.707<0.1,10,0.01>Q
+slider5:0<-24,24,0.1>Gain (dB)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+pi = 3.14159265359;
+dc_off = 0.000000000000000001;
+
+// Give each filter instance a unique object index so left/right and each band have independent state
+filt1L = 0;  filt1L.x1 = 0; filt1L.x2 = 0; filt1L.y1 = 0; filt1L.y2 = 0;
+filt1R = 1;  filt1R.x1 = 0; filt1R.x2 = 0; filt1R.y1 = 0; filt1R.y2 = 0;
+filt2L = 2;  filt2L.x1 = 0; filt2L.x2 = 0; filt2L.y1 = 0; filt2L.y2 = 0;
+filt2R = 3;  filt2R.x1 = 0; filt2R.x2 = 0; filt2R.y1 = 0; filt2R.y2 = 0;
+filt3L = 4;  filt3L.x1 = 0; filt3L.x2 = 0; filt3L.y1 = 0; filt3L.y2 = 0;
+filt3R = 5;  filt3R.x1 = 0; filt3R.x2 = 0; filt3R.y1 = 0; filt3R.y2 = 0;
+filt4L = 6;  filt4L.x1 = 0; filt4L.x2 = 0; filt4L.y1 = 0; filt4L.y2 = 0;
+filt4R = 7;  filt4R.x1 = 0; filt4R.x2 = 0; filt4R.y1 = 0; filt4R.y2 = 0;
+filt5L = 8;  filt5L.x1 = 0; filt5L.x2 = 0; filt5L.y1 = 0; filt5L.y2 = 0;
+filt5R = 9;  filt5R.x1 = 0; filt5R.x2 = 0; filt5R.y1 = 0; filt5R.y2 = 0;
+filt6L = 10; filt6L.x1 = 0; filt6L.x2 = 0; filt6L.y1 = 0; filt6L.y2 = 0;
+filt6R = 11; filt6R.x1 = 0; filt6R.x2 = 0; filt6R.y1 = 0; filt6R.y2 = 0;
+filt7L = 12; filt7L.x1 = 0; filt7L.x2 = 0; filt7L.y1 = 0; filt7L.y2 = 0;
+filt7R = 13; filt7R.x1 = 0; filt7R.x2 = 0; filt7R.y1 = 0; filt7R.y2 = 0;
+filt8L = 14; filt8L.x1 = 0; filt8L.x2 = 0; filt8L.y1 = 0; filt8L.y2 = 0;
+filt8R = 15; filt8R.x1 = 0; filt8R.x2 = 0; filt8R.y1 = 0; filt8R.y2 = 0;
+
+function calc_hpf(freq, q) (
+  w0 = 2 * pi * freq / srate;
+  alpha = sin(w0) / (2 * q);
+  b0 = (1 + cos(w0)) / 2;
+  b1 = -(1 + cos(w0));
+  b2 = (1 + cos(w0)) / 2;
+  a0 = 1 + alpha;
+  a1 = -2 * cos(w0);
+  a2 = 1 - alpha;
+  this.b0 = b0/a0; this.b1 = b1/a0; this.b2 = b2/a0;
+  this.a1 = a1/a0; this.a2 = a2/a0;
+  // Stability clamp
+  this.a2 > 0.99999 ? this.a2 = 0.99999;
+  this.a2 < -0.99999 ? this.a2 = -0.99999;
+  this.a1 > 1 + this.a2 ? this.a1 = 1 + this.a2;
+  this.a1 < -(1 + this.a2) ? this.a1 = -(1 + this.a2);
+);
+
+function calc_lpf(freq, q) (
+  w0 = 2 * pi * freq / srate;
+  alpha = sin(w0) / (2 * q);
+  b0 = (1 - cos(w0)) / 2;
+  b1 = 1 - cos(w0);
+  b2 = (1 - cos(w0)) / 2;
+  a0 = 1 + alpha;
+  a1 = -2 * cos(w0);
+  a2 = 1 - alpha;
+  this.b0 = b0/a0; this.b1 = b1/a0; this.b2 = b2/a0;
+  this.a1 = a1/a0; this.a2 = a2/a0;
+  this.a2 > 0.99999 ? this.a2 = 0.99999;
+  this.a2 < -0.99999 ? this.a2 = -0.99999;
+  this.a1 > 1 + this.a2 ? this.a1 = 1 + this.a2;
+  this.a1 < -(1 + this.a2) ? this.a1 = -(1 + this.a2);
+);
+
+function calc_low_shelf(freq, gain_db, q) (
+  A = 10^(gain_db/40);
+  w0 = 2 * pi * freq / srate;
+  alpha = sin(w0) / (2 * q);
+  b0 = A * ( (A+1) - (A-1)*cos(w0) + 2*sqrt(A)*alpha );
+  b1 = 2 * A * ( (A-1) - (A+1)*cos(w0) );
+  b2 = A * ( (A+1) - (A-1)*cos(w0) - 2*sqrt(A)*alpha );
+  a0 = (A+1) + (A-1)*cos(w0) + 2*sqrt(A)*alpha;
+  a1 = -2 * ( (A-1) + (A+1)*cos(w0) );
+  a2 = (A+1) + (A-1)*cos(w0) - 2*sqrt(A)*alpha;
+  this.b0 = b0/a0; this.b1 = b1/a0; this.b2 = b2/a0;
+  this.a1 = a1/a0; this.a2 = a2/a0;
+  this.a2 > 0.99999 ? this.a2 = 0.99999;
+  this.a2 < -0.99999 ? this.a2 = -0.99999;
+  this.a1 > 1 + this.a2 ? this.a1 = 1 + this.a2;
+  this.a1 < -(1 + this.a2) ? this.a1 = -(1 + this.a2);
+);
+
+function calc_high_shelf(freq, gain_db, q) (
+  A = 10^(gain_db/40);
+  w0 = 2 * pi * freq / srate;
+  alpha = sin(w0) / (2 * q);
+  b0 = A * ( (A+1) + (A-1)*cos(w0) + 2*sqrt(A)*alpha );
+  b1 = -2 * A * ( (A-1) + (A+1)*cos(w0) );
+  b2 = A * ( (A+1) + (A-1)*cos(w0) - 2*sqrt(A)*alpha );
+  a0 = (A+1) - (A-1)*cos(w0) + 2*sqrt(A)*alpha;
+  a1 = 2 * ( (A-1) - (A+1)*cos(w0) );
+  a2 = (A+1) - (A-1)*cos(w0) - 2*sqrt(A)*alpha;
+  this.b0 = b0/a0; this.b1 = b1/a0; this.b2 = b2/a0;
+  this.a1 = a1/a0; this.a2 = a2/a0;
+  this.a2 > 0.99999 ? this.a2 = 0.99999;
+  this.a2 < -0.99999 ? this.a2 = -0.99999;
+  this.a1 > 1 + this.a2 ? this.a1 = 1 + this.a2;
+  this.a1 < -(1 + this.a2) ? this.a1 = -(1 + this.a2);
+);
+
+function calc_peak(freq, gain_db, q) (
+  A = 10^(gain_db/40);
+  w0 = 2 * pi * freq / srate;
+  alpha = sin(w0) / (2 * q);
+  b0 = 1 + alpha * A;
+  b1 = -2 * cos(w0);
+  b2 = 1 - alpha * A;
+  a0 = 1 + alpha / A;
+  a1 = -2 * cos(w0);
+  a2 = 1 - alpha / A;
+  this.b0 = b0/a0; this.b1 = b1/a0; this.b2 = b2/a0;
+  this.a1 = a1/a0; this.a2 = a2/a0;
+  this.a2 > 0.99999 ? this.a2 = 0.99999;
+  this.a2 < -0.99999 ? this.a2 = -0.99999;
+  this.a1 > 1 + this.a2 ? this.a1 = 1 + this.a2;
+  this.a1 < -(1 + this.a2) ? this.a1 = -(1 + this.a2);
+);
+
+function process_filter(x) (
+  y = this.b0*x + this.b1*this.x1 + this.b2*this.x2 - this.a1*this.y1 - this.a2*this.y2;
+  this.x2 = this.x1; this.x1 = x;
+  this.y2 = this.y1; this.y1 = y;
+  y + dc_off;
+);
+
+function get_magnitude(freq) (
+  w = 2 * pi * freq / srate;
+  cos_w = cos(w); cos_2w = cos(2*w);
+  num = this.b0^2 + this.b1^2 + this.b2^2 + 2*(this.b0*this.b1 + this.b1*this.b2)*cos_w + 2*this.b0*this.b2*cos_2w;
+  den = 1 + this.a1^2 + this.a2^2 + 2*(this.a1 + this.a1*this.a2)*cos_w + 2*this.a2*cos_2w;
+  sqrt(num / den);
+);
+
+fft_size = 2048;
+fft_workspace = 0;
+fft_display = fft_size * 2;
+window_buf = fft_display + fft_size;
+eq_cache = window_buf + fft_size;
+fft_bins = eq_cache + 320;
+
+// Precompute FFT bin indices for each pixel position
+i = 0;
+while(i < 640) (
+  f = 20 * (1000 ^ (i/640));
+  fft_bins[i] = max(1, min(floor(f * fft_size / srate), fft_size/2 - 1));
+  i += 1;
+);
+
+i = 0;
+while(i < fft_size) (
+  window_buf[i] = 0.5 * (1 - cos(2 * pi * i / fft_size));
+  i += 1;
+);
+fft_pos = 0;
+freq = 1000;
+gfx_frame = 3;
+curve_dirty = 1;
+
+bt1=4; bf1=80;   bq1=0.707; bg1=0;
+bt2=4; bf2=200;  bq2=0.707; bg2=0;
+bt3=4; bf3=450;  bq3=0.707; bg3=0;
+bt4=4; bf4=1000; bq4=0.707; bg4=0;
+bt5=4; bf5=1800; bq5=0.707; bg5=0;
+bt6=4; bf6=4000; bq6=0.707; bg6=0;
+bt7=4; bf7=9000; bq7=0.707; bg7=0;
+bt8=4; bf8=15000;bq8=0.707; bg8=0;
+
+last_band = 0;
+
+// Shadow variables to detect parameter changes (init to -1 so first run detects change)
+lbt1=-1; lbf1=-1; lbq1=-1; lbg1=-1;
+lbt2=-1; lbf2=-1; lbq2=-1; lbg2=-1;
+lbt3=-1; lbf3=-1; lbq3=-1; lbg3=-1;
+lbt4=-1; lbf4=-1; lbq4=-1; lbg4=-1;
+lbt5=-1; lbf5=-1; lbq5=-1; lbg5=-1;
+lbt6=-1; lbf6=-1; lbq6=-1; lbg6=-1;
+lbt7=-1; lbf7=-1; lbq7=-1; lbg7=-1;
+lbt8=-1; lbf8=-1; lbq8=-1; lbg8=-1;
+
+@slider
+selected_band = slider1 + 1;
+
+// Compute frequency from slider position (before save, so save uses current freq)
+freq = 20 * (1000 ^ slider3);
+
+// First call: save current slider values (preserve project-saved values, don't load defaults)
+last_band == 0 ? (
+  selected_band == 1 ? (bt1=slider2; bf1=freq; bq1=slider4; bg1=slider5;);
+  selected_band == 2 ? (bt2=slider2; bf2=freq; bq2=slider4; bg2=slider5;);
+  selected_band == 3 ? (bt3=slider2; bf3=freq; bq3=slider4; bg3=slider5;);
+  selected_band == 4 ? (bt4=slider2; bf4=freq; bq4=slider4; bg4=slider5;);
+  selected_band == 5 ? (bt5=slider2; bf5=freq; bq5=slider4; bg5=slider5;);
+  selected_band == 6 ? (bt6=slider2; bf6=freq; bq6=slider4; bg6=slider5;);
+  selected_band == 7 ? (bt7=slider2; bf7=freq; bq7=slider4; bg7=slider5;);
+  selected_band == 8 ? (bt8=slider2; bf8=freq; bq8=slider4; bg8=slider5;);
+  last_band = selected_band;
+) : (
+  // Save previous band parameters before switching
+  last_band >= 1 && last_band <= 8 ? (
+    last_band == 1 ? (bt1=slider2; bf1=freq; bq1=slider4; bg1=slider5;);
+    last_band == 2 ? (bt2=slider2; bf2=freq; bq2=slider4; bg2=slider5;);
+    last_band == 3 ? (bt3=slider2; bf3=freq; bq3=slider4; bg3=slider5;);
+    last_band == 4 ? (bt4=slider2; bf4=freq; bq4=slider4; bg4=slider5;);
+    last_band == 5 ? (bt5=slider2; bf5=freq; bq5=slider4; bg5=slider5;);
+    last_band == 6 ? (bt6=slider2; bf6=freq; bq6=slider4; bg6=slider5;);
+    last_band == 7 ? (bt7=slider2; bf7=freq; bq7=slider4; bg7=slider5;);
+    last_band == 8 ? (bt8=slider2; bf8=freq; bq8=slider4; bg8=slider5;);
+  );
+
+  // Load new band if changed
+  selected_band != last_band ? (
+    slider2 = selected_band == 1 ? bt1 : selected_band == 2 ? bt2 : selected_band == 3 ? bt3 : selected_band == 4 ? bt4 : selected_band == 5 ? bt5 : selected_band == 6 ? bt6 : selected_band == 7 ? bt7 : bt8; sliderchange(2);
+    new_bf = selected_band == 1 ? bf1 : selected_band == 2 ? bf2 : selected_band == 3 ? bf3 : selected_band == 4 ? bf4 : selected_band == 5 ? bf5 : selected_band == 6 ? bf6 : selected_band == 7 ? bf7 : bf8;
+    slider3 = log(new_bf/20) / log(1000); sliderchange(3);
+    slider4 = selected_band == 1 ? bq1 : selected_band == 2 ? bq2 : selected_band == 3 ? bq3 : selected_band == 4 ? bq4 : selected_band == 5 ? bq5 : selected_band == 6 ? bq6 : selected_band == 7 ? bq7 : bq8; sliderchange(4);
+    slider5 = selected_band == 1 ? bg1 : selected_band == 2 ? bg2 : selected_band == 3 ? bg3 : selected_band == 4 ? bg4 : selected_band == 5 ? bg5 : selected_band == 6 ? bg6 : selected_band == 7 ? bg7 : bg8; sliderchange(5);
+    last_band = selected_band;
+    // Recompute freq after loading new band's slider position
+    freq = 20 * (1000 ^ slider3);
+  );
+);
+
+// Update current band's frequency
+selected_band == 1 ? (bf1=freq;) : selected_band == 2 ? (bf2=freq;) : selected_band == 3 ? (bf3=freq;) : selected_band == 4 ? (bf4=freq;) : selected_band == 5 ? (bf5=freq;) : selected_band == 6 ? (bf6=freq;) : selected_band == 7 ? (bf7=freq;) : (bf8=freq;);
+
+// Recalculate coefficients only for bands whose parameters changed
+bt1 != lbt1 || bf1 != lbf1 || bq1 != lbq1 || bg1 != lbg1 ? (
+  bt1 == 0 ? (filt1L.calc_hpf(bf1, bq1); filt1R.calc_hpf(bf1, bq1););
+  bt1 == 1 ? (filt1L.calc_lpf(bf1, bq1); filt1R.calc_lpf(bf1, bq1););
+  bt1 == 2 ? (filt1L.calc_low_shelf(bf1, bg1, bq1); filt1R.calc_low_shelf(bf1, bg1, bq1););
+  bt1 == 3 ? (filt1L.calc_high_shelf(bf1, bg1, bq1); filt1R.calc_high_shelf(bf1, bg1, bq1););
+  bt1 == 4 ? (filt1L.calc_peak(bf1, bg1, bq1); filt1R.calc_peak(bf1, bg1, bq1););
+  filt1L.x1 *= 0.01; filt1L.x2 *= 0.01; filt1L.y1 *= 0.01; filt1L.y2 *= 0.01;
+  filt1R.x1 *= 0.01; filt1R.x2 *= 0.01; filt1R.y1 *= 0.01; filt1R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt1=bt1; lbf1=bf1; lbq1=bq1; lbg1=bg1;
+);
+bt2 != lbt2 || bf2 != lbf2 || bq2 != lbq2 || bg2 != lbg2 ? (
+  bt2 == 0 ? (filt2L.calc_hpf(bf2, bq2); filt2R.calc_hpf(bf2, bq2););
+  bt2 == 1 ? (filt2L.calc_lpf(bf2, bq2); filt2R.calc_lpf(bf2, bq2););
+  bt2 == 2 ? (filt2L.calc_low_shelf(bf2, bg2, bq2); filt2R.calc_low_shelf(bf2, bg2, bq2););
+  bt2 == 3 ? (filt2L.calc_high_shelf(bf2, bg2, bq2); filt2R.calc_high_shelf(bf2, bg2, bq2););
+  bt2 == 4 ? (filt2L.calc_peak(bf2, bg2, bq2); filt2R.calc_peak(bf2, bg2, bq2););
+  filt2L.x1 *= 0.01; filt2L.x2 *= 0.01; filt2L.y1 *= 0.01; filt2L.y2 *= 0.01;
+  filt2R.x1 *= 0.01; filt2R.x2 *= 0.01; filt2R.y1 *= 0.01; filt2R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt2=bt2; lbf2=bf2; lbq2=bq2; lbg2=bg2;
+);
+bt3 != lbt3 || bf3 != lbf3 || bq3 != lbq3 || bg3 != lbg3 ? (
+  bt3 == 0 ? (filt3L.calc_hpf(bf3, bq3); filt3R.calc_hpf(bf3, bq3););
+  bt3 == 1 ? (filt3L.calc_lpf(bf3, bq3); filt3R.calc_lpf(bf3, bq3););
+  bt3 == 2 ? (filt3L.calc_low_shelf(bf3, bg3, bq3); filt3R.calc_low_shelf(bf3, bg3, bq3););
+  bt3 == 3 ? (filt3L.calc_high_shelf(bf3, bg3, bq3); filt3R.calc_high_shelf(bf3, bg3, bq3););
+  bt3 == 4 ? (filt3L.calc_peak(bf3, bg3, bq3); filt3R.calc_peak(bf3, bg3, bq3););
+  filt3L.x1 *= 0.01; filt3L.x2 *= 0.01; filt3L.y1 *= 0.01; filt3L.y2 *= 0.01;
+  filt3R.x1 *= 0.01; filt3R.x2 *= 0.01; filt3R.y1 *= 0.01; filt3R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt3=bt3; lbf3=bf3; lbq3=bq3; lbg3=bg3;
+);
+bt4 != lbt4 || bf4 != lbf4 || bq4 != lbq4 || bg4 != lbg4 ? (
+  bt4 == 0 ? (filt4L.calc_hpf(bf4, bq4); filt4R.calc_hpf(bf4, bq4););
+  bt4 == 1 ? (filt4L.calc_lpf(bf4, bq4); filt4R.calc_lpf(bf4, bq4););
+  bt4 == 2 ? (filt4L.calc_low_shelf(bf4, bg4, bq4); filt4R.calc_low_shelf(bf4, bg4, bq4););
+  bt4 == 3 ? (filt4L.calc_high_shelf(bf4, bg4, bq4); filt4R.calc_high_shelf(bf4, bg4, bq4););
+  bt4 == 4 ? (filt4L.calc_peak(bf4, bg4, bq4); filt4R.calc_peak(bf4, bg4, bq4););
+  filt4L.x1 *= 0.01; filt4L.x2 *= 0.01; filt4L.y1 *= 0.01; filt4L.y2 *= 0.01;
+  filt4R.x1 *= 0.01; filt4R.x2 *= 0.01; filt4R.y1 *= 0.01; filt4R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt4=bt4; lbf4=bf4; lbq4=bq4; lbg4=bg4;
+);
+bt5 != lbt5 || bf5 != lbf5 || bq5 != lbq5 || bg5 != lbg5 ? (
+  bt5 == 0 ? (filt5L.calc_hpf(bf5, bq5); filt5R.calc_hpf(bf5, bq5););
+  bt5 == 1 ? (filt5L.calc_lpf(bf5, bq5); filt5R.calc_lpf(bf5, bq5););
+  bt5 == 2 ? (filt5L.calc_low_shelf(bf5, bg5, bq5); filt5R.calc_low_shelf(bf5, bg5, bq5););
+  bt5 == 3 ? (filt5L.calc_high_shelf(bf5, bg5, bq5); filt5R.calc_high_shelf(bf5, bg5, bq5););
+  bt5 == 4 ? (filt5L.calc_peak(bf5, bg5, bq5); filt5R.calc_peak(bf5, bg5, bq5););
+  filt5L.x1 *= 0.01; filt5L.x2 *= 0.01; filt5L.y1 *= 0.01; filt5L.y2 *= 0.01;
+  filt5R.x1 *= 0.01; filt5R.x2 *= 0.01; filt5R.y1 *= 0.01; filt5R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt5=bt5; lbf5=bf5; lbq5=bq5; lbg5=bg5;
+);
+bt6 != lbt6 || bf6 != lbf6 || bq6 != lbq6 || bg6 != lbg6 ? (
+  bt6 == 0 ? (filt6L.calc_hpf(bf6, bq6); filt6R.calc_hpf(bf6, bq6););
+  bt6 == 1 ? (filt6L.calc_lpf(bf6, bq6); filt6R.calc_lpf(bf6, bq6););
+  bt6 == 2 ? (filt6L.calc_low_shelf(bf6, bg6, bq6); filt6R.calc_low_shelf(bf6, bg6, bq6););
+  bt6 == 3 ? (filt6L.calc_high_shelf(bf6, bg6, bq6); filt6R.calc_high_shelf(bf6, bg6, bq6););
+  bt6 == 4 ? (filt6L.calc_peak(bf6, bg6, bq6); filt6R.calc_peak(bf6, bg6, bq6););
+  filt6L.x1 *= 0.01; filt6L.x2 *= 0.01; filt6L.y1 *= 0.01; filt6L.y2 *= 0.01;
+  filt6R.x1 *= 0.01; filt6R.x2 *= 0.01; filt6R.y1 *= 0.01; filt6R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt6=bt6; lbf6=bf6; lbq6=bq6; lbg6=bg6;
+);
+bt7 != lbt7 || bf7 != lbf7 || bq7 != lbq7 || bg7 != lbg7 ? (
+  bt7 == 0 ? (filt7L.calc_hpf(bf7, bq7); filt7R.calc_hpf(bf7, bq7););
+  bt7 == 1 ? (filt7L.calc_lpf(bf7, bq7); filt7R.calc_lpf(bf7, bq7););
+  bt7 == 2 ? (filt7L.calc_low_shelf(bf7, bg7, bq7); filt7R.calc_low_shelf(bf7, bg7, bq7););
+  bt7 == 3 ? (filt7L.calc_high_shelf(bf7, bg7, bq7); filt7R.calc_high_shelf(bf7, bg7, bq7););
+  bt7 == 4 ? (filt7L.calc_peak(bf7, bg7, bq7); filt7R.calc_peak(bf7, bg7, bq7););
+  filt7L.x1 *= 0.01; filt7L.x2 *= 0.01; filt7L.y1 *= 0.01; filt7L.y2 *= 0.01;
+  filt7R.x1 *= 0.01; filt7R.x2 *= 0.01; filt7R.y1 *= 0.01; filt7R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt7=bt7; lbf7=bf7; lbq7=bq7; lbg7=bg7;
+);
+bt8 != lbt8 || bf8 != lbf8 || bq8 != lbq8 || bg8 != lbg8 ? (
+  bt8 == 0 ? (filt8L.calc_hpf(bf8, bq8); filt8R.calc_hpf(bf8, bq8););
+  bt8 == 1 ? (filt8L.calc_lpf(bf8, bq8); filt8R.calc_lpf(bf8, bq8););
+  bt8 == 2 ? (filt8L.calc_low_shelf(bf8, bg8, bq8); filt8R.calc_low_shelf(bf8, bg8, bq8););
+  bt8 == 3 ? (filt8L.calc_high_shelf(bf8, bg8, bq8); filt8R.calc_high_shelf(bf8, bg8, bq8););
+  bt8 == 4 ? (filt8L.calc_peak(bf8, bg8, bq8); filt8R.calc_peak(bf8, bg8, bq8););
+  filt8L.x1 *= 0.01; filt8L.x2 *= 0.01; filt8L.y1 *= 0.01; filt8L.y2 *= 0.01;
+  filt8R.x1 *= 0.01; filt8R.x2 *= 0.01; filt8R.y1 *= 0.01; filt8R.y2 *= 0.01;
+  curve_dirty = 1;
+  lbt8=bt8; lbf8=bf8; lbq8=bq8; lbg8=bg8;
+);
+
+@sample
+spl0 = filt1L.process_filter(spl0); spl1 = filt1R.process_filter(spl1);
+spl0 = filt2L.process_filter(spl0); spl1 = filt2R.process_filter(spl1);
+spl0 = filt3L.process_filter(spl0); spl1 = filt3R.process_filter(spl1);
+spl0 = filt4L.process_filter(spl0); spl1 = filt4R.process_filter(spl1);
+spl0 = filt5L.process_filter(spl0); spl1 = filt5R.process_filter(spl1);
+spl0 = filt6L.process_filter(spl0); spl1 = filt6R.process_filter(spl1);
+spl0 = filt7L.process_filter(spl0); spl1 = filt7R.process_filter(spl1);
+spl0 = filt8L.process_filter(spl0); spl1 = filt8R.process_filter(spl1);
+
+// Soft limiter to prevent digital clipping while avoiding hard distortion
+spl0 > 0.99 ? spl0 = 0.99; spl0 < -0.99 ? spl0 = -0.99;
+spl1 > 0.99 ? spl1 = 0.99; spl1 < -0.99 ? spl1 = -0.99;
+
+fft_workspace[fft_pos * 2] = (spl0 + spl1) * 0.5 * window_buf[fft_pos];
+fft_workspace[fft_pos * 2 + 1] = 0;
+fft_pos += 1;
+
+fft_pos >= fft_size ? (
+  fft(fft_workspace, fft_size);
+  fft_permute(fft_workspace, fft_size);
+  i = 0;
+  while(i < fft_size/2) (
+    re = fft_workspace[i*2];
+    im = fft_workspace[i*2 + 1];
+    fft_display[i] = sqrt(re*re + im*im);
+    i += 1;
+  );
+  fft_pos = 0;
+);
+
+@gfx 640 300
+gfx_r=0.05; gfx_g=0.05; gfx_b=0.05; gfx_rect(0,0,gfx_w,gfx_h);
+
+gfx_r=0.2; gfx_g=0.5; gfx_b=0.8; gfx_a=0.4;
+x = 0;
+while(x < gfx_w) (
+  bin = fft_bins[x];
+  mag = fft_display[bin] / 1024;
+  mag_db = 20 * log10(mag + 0.000001);
+  fft_y = mag_db * -4.167;
+  fft_y = max(0, min(fft_y, gfx_h));
+  gfx_rect(x, fft_y, 2, gfx_h - fft_y);
+  x += 4;
+);
+
+gfx_r=0.3; gfx_g=0.3; gfx_b=0.3; gfx_a=1;
+gfx_line(0, gfx_h/2, gfx_w, gfx_h/2);
+
+curve_dirty ? (
+  db_range = 18;
+  i = 0; ci = 0;
+  while(i < gfx_w) (
+    f = 20 * (1000 ^ (i/gfx_w));
+    mag = filt1L.get_magnitude(f);
+    mag *= filt2L.get_magnitude(f);
+    mag *= filt3L.get_magnitude(f);
+    mag *= filt4L.get_magnitude(f);
+    mag *= filt5L.get_magnitude(f);
+    mag *= filt6L.get_magnitude(f);
+    mag *= filt7L.get_magnitude(f);
+    mag *= filt8L.get_magnitude(f);
+    mag_db = 20 * log10(mag + 0.000001);
+    mag_db = max(-db_range, min(db_range, mag_db));
+    y = (gfx_h/2) - ((mag_db / db_range) * (gfx_h/2));
+    y = max(0, min(gfx_h, y));
+    eq_cache[ci] = y;
+    ci += 1; i += 2;
+  );
+  curve_dirty = 0;
+);
+
+gfx_r=1; gfx_g=0.7; gfx_b=0.2; gfx_a=1;
+i = 0; ci = 0;
+while(i < gfx_w) (
+  y = eq_cache[ci];
+  ci += 1;
+  i == 0 ? ( gfx_x = i; gfx_y = y; ) : ( gfx_lineto(i, y, 1); );
+  i += 2;
+);
+
+gfx_r=1; gfx_g=1; gfx_b=1; gfx_a=0.8;
+gfx_x = 4; gfx_y = 4;
+gfx_drawnumber(selected_band, 0);
+gfx_x = 28; gfx_y = 4;
+gfx_drawnumber(freq, 0);
+gfx_drawchar(32); gfx_drawchar(72); gfx_drawchar(122);

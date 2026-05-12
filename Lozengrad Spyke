@@ -1,0 +1,87 @@
+desc: Lozengrad Spyke
+
+slider1:0<-100,100,1>Attack (%)
+slider2:0<-100,100,1>Sustain (%)
+slider3:0<-12,12,0.1>Output (dB)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+// RC Lowpass filtre katsayısını hesaplayan fonksiyon
+function calc_coeff(ms) (
+  1.0 - exp(-1.0 / (ms * 0.001 * srate));
+);
+
+// Zarf zamanlamaları (Kendi zevkinize göre modifiye edebilirsiniz)
+c_att_fast = calc_coeff(1);    // 1ms Attack tespiti
+c_att_slow = calc_coeff(15);   // 15ms Gövde tespiti
+c_rel = calc_coeff(50);        // 50ms Ortak release (Attack kısmı için)
+
+c_sus_rel = calc_coeff(200);   // 200ms Uzun release (Sustain tespiti için)
+
+@slider
+att_gain = slider1 / 100; // -1.0 ile 1.0 arasına normalize
+sus_gain = slider2 / 100;
+out_vol = 10^(slider3 / 20);
+
+@sample
+// Enerjiyi bulmak için sol ve sağ kanalın karelerinin ortalamasını alıyoruz
+rect = (spl0 * spl0 + spl1 * spl1) * 0.5;
+
+// 1. Hızlı Zarf (Attack kısmını anında yakalar)
+rect > env1 ? env1 += c_att_fast * (rect - env1) : env1 += c_rel * (rect - env1);
+
+// 2. Yavaş Zarf (Gövdeyi yakalar, attack kısmına geç tepki verir)
+rect > env2 ? env2 += c_att_slow * (rect - env2) : env2 += c_rel * (rect - env2);
+
+// 3. Sustain Zarfı (Sesi geç bırakır)
+rect > env3 ? env3 += c_att_slow * (rect - env3) : env3 += c_sus_rel * (rect - env3);
+
+// Kareleri alınmış sinyallerin karekökünü alarak genliğe geri dönüyoruz
+amp1 = sqrt(env1);
+amp2 = sqrt(env2);
+amp3 = sqrt(env3);
+
+// Farkları bul (Sadece pozitif değerleri alıyoruz)
+// Eğer hızlı zarf, yavaş zarftan büyükse bir transient (vuruş) vardır.
+att_diff = max(amp1 - amp2, 0);
+
+// Eğer sustain zarfı (geç kapanan), hızlı zarftan büyükse kuyruk kısmındayız demektir.
+sus_diff = max(amp3 - amp1, 0);
+
+// Normalizasyon
+// Sinyalin gürlüğüne bağlı olmaması için farkları ana gövde genliğine bölüyoruz.
+// Sıfıra bölme hatasını önlemek için max(..., 0.001) kullanıyoruz.
+att_env = att_diff / max(amp2, 0.001);
+sus_env = sus_diff / max(amp1, 0.001);
+
+// Gain çarpanını hesaplama (Varsayılan değer 1.0)
+mod = 1.0;
+
+// Attack slider kontrolü
+att_gain > 0 ? (
+  mod += att_env * att_gain * 2.0; // Boost yaparken daha agresif
+) : (
+  mod += att_env * att_gain;       // Keserken daha doğal
+);
+
+// Sustain slider kontrolü
+sus_gain > 0 ? (
+  mod += sus_env * sus_gain * 1.5; 
+) : (
+  mod += sus_env * sus_gain * 0.5; 
+);
+
+// Gain çarpanının sıfırın altına inip fazı ters çevirmesini engelliyoruz
+mod = max(mod, 0.05);
+
+// Çıkışa uygulama
+spl0 = spl0 * mod * out_vol;
+spl1 = spl1 * mod * out_vol;
+
+// Gizli -0.1 dB clipper (safeguard)
+spl0 > 0.9886 ? spl0 = 0.9886 : spl0 < -0.9886 ? spl0 = -0.9886;
+spl1 > 0.9886 ? spl1 = 0.9886 : spl1 < -0.9886 ? spl1 = -0.9886;
