@@ -1,0 +1,508 @@
+desc:Lozengrad Pedal
+//tags: distortion guitar
+//author: DSP Modelleme
+
+// ============================================================
+// Boss DS-2 Turbo Distortion - JSFX Simulation
+// Teknik Rapor Spesifikasyonlarına Uygun
+//
+// Sinyal Zinciri:
+//   Input Buffer -> Pre-EQ HPF (80Hz) -> Soft Clip (D14/D15)
+//   -> DC Blocker -> Turbo Stage (Q23 + BP 900Hz + Notch 2500Hz)
+//   -> Hard Clip (D11/D12) -> Anti-Alias LPF
+//   -> Tone Stack (Peaking + Low-Shelf) -> Output Level
+// ============================================================
+
+slider1:5<0,100,1>Gain
+slider2:0<-1,1,0.01>Tone
+slider3:50<0,100,1>Level
+slider4:0<0,1,1{Turbo I,Turbo II}>Turbo Mode
+slider5:1<0,2,1{Off,4x,8x}>Oversampling
+
+@init
+
+gain_lin = 1.0;
+level_lin = 1.0;
+tone_pos = 0;
+turbo_mode = 0;
+os_mode = 1;
+
+dc_alpha = 0.997;
+dc_in_x1 = 0; dc_in_y1 = 0;
+dc_in_x2 = 0; dc_in_y2 = 0;
+dc_mid_x1 = 0; dc_mid_y1 = 0;
+dc_mid_x2 = 0; dc_mid_y2 = 0;
+dc_out_x1 = 0; dc_out_y1 = 0;
+dc_out_x2 = 0; dc_out_y2 = 0;
+
+hpf_x1_L = 0; hpf_y1_L = 0;
+hpf_x1_R = 0; hpf_y1_R = 0;
+hpf_a0 = 0; hpf_a1 = 0; hpf_b1 = 0;
+
+turbo_x1_L = 0; turbo_x2_L = 0; turbo_y1_L = 0; turbo_y2_L = 0;
+turbo_x1_R = 0; turbo_x2_R = 0; turbo_y1_R = 0; turbo_y2_R = 0;
+turbo_bp_a0 = 0; turbo_bp_a1 = 0; turbo_bp_a2 = 0;
+turbo_bp_b1 = 0; turbo_bp_b2 = 0;
+
+notch_x1_L = 0; notch_x2_L = 0; notch_y1_L = 0; notch_y2_L = 0;
+notch_x1_R = 0; notch_x2_R = 0; notch_y1_R = 0; notch_y2_R = 0;
+notch_a0 = 0; notch_a1 = 0; notch_a2 = 0;
+notch_b1 = 0; notch_b2 = 0;
+
+turbo_ls_x1_L = 0; turbo_ls_x2_L = 0; turbo_ls_y1_L = 0; turbo_ls_y2_L = 0;
+turbo_ls_x1_R = 0; turbo_ls_x2_R = 0; turbo_ls_y1_R = 0; turbo_ls_y2_R = 0;
+turbo_ls_a0 = 1; turbo_ls_a1 = 0; turbo_ls_a2 = 0;
+turbo_ls_b1 = 0; turbo_ls_b2 = 0;
+
+aa_x1_L = 0; aa_x2_L = 0; aa_y1_L = 0; aa_y2_L = 0;
+aa_x1_R = 0; aa_x2_R = 0; aa_y1_R = 0; aa_y2_R = 0;
+aa_a0 = 0; aa_a1 = 0; aa_a2 = 0;
+aa_b1 = 0; aa_b2 = 0;
+
+ts1_x1_L = 0; ts1_x2_L = 0; ts1_y1_L = 0; ts1_y2_L = 0;
+ts1_x1_R = 0; ts1_x2_R = 0; ts1_y1_R = 0; ts1_y2_R = 0;
+ts1_a0 = 1; ts1_a1 = 0; ts1_a2 = 0; ts1_b1 = 0; ts1_b2 = 0;
+
+ts2_x1_L = 0; ts2_x2_L = 0; ts2_y1_L = 0; ts2_y2_L = 0;
+ts2_x1_R = 0; ts2_x2_R = 0; ts2_y1_R = 0; ts2_y2_R = 0;
+ts2_a0 = 1; ts2_a1 = 0; ts2_a2 = 0; ts2_b1 = 0; ts2_b2 = 0;
+
+pk_a0 = 1; pk_a1 = 0; pk_a2 = 0; pk_b1 = 0; pk_b2 = 0;
+
+SOFT_DC_BIAS = 0.02;
+SOFT_GAIN = 2.5;
+TURBO_GAIN_I = 1.0;
+TURBO_GAIN_II = 1.8;
+TURBO_BP_CENTER = 900;
+TURBO_BP_Q = 1.3;
+TURBO_BP_GAIN_DB = 9;
+TURBO_CUT_FREQ = 2500;
+TURBO_CUT_Q = 2.0;
+TURBO_CUT_GAIN_DB = -9;
+TURBO_LOW_SHELF_FREQ = 200;
+TURBO_LOW_SHELF_Q = 0.7;
+TURBO_LOW_SHELF_GAIN_DB = -3;
+HARD_CLIP_N = 8;
+
+gfx_idx = 0;
+GFX_BUF_SIZE = 400;
+i = 0;
+loop(GFX_BUF_SIZE,
+  gfx_in_buf[i] = 0;
+  gfx_out_buf[i] = 0;
+  i += 1;
+);
+
+prev_sr = -1;
+prev_tone = -999;
+prev_os = -1;
+prev_turbo = -1;
+
+function calc_hpf80(sr) (
+  wc = 2 * $pi * 80;
+  k = 2 * sr;
+  hpf_a0 = k / (k + wc);
+  hpf_a1 = -hpf_a0;
+  hpf_b1 = (k - wc) / (k + wc);
+);
+
+function calc_peaking(sr, freq, q, gain_db) (
+  A = 10 ^ (gain_db / 40);
+  w0 = 2 * $pi * freq / sr;
+  alpha = sin(w0) / (2 * q);
+  cosw = cos(w0);
+
+  b0 = 1 + alpha * A;
+  b1c = -2 * cosw;
+  b2c = 1 - alpha * A;
+  a0c = 1 + alpha / A;
+  a1c = -2 * cosw;
+  a2c = 1 - alpha / A;
+
+  pk_a0 = b0 / a0c;
+  pk_a1 = b1c / a0c;
+  pk_a2 = b2c / a0c;
+  pk_b1 = a1c / a0c;
+  pk_b2 = a2c / a0c;
+);
+
+function calc_lowshelf(sr, freq, q, gain_db) (
+  A = 10 ^ (gain_db / 40);
+  w0 = 2 * $pi * freq / sr;
+  alpha = sin(w0) / (2 * q);
+  cosw = cos(w0);
+  sqA = sqrt(A);
+
+  b0 = A * ((A + 1) + (A - 1) * cosw + 2 * sqA * alpha);
+  b1c = 2 * A * ((A - 1) + (A + 1) * cosw);
+  b2c = A * ((A + 1) + (A - 1) * cosw - 2 * sqA * alpha);
+  a0c = (A + 1) - (A - 1) * cosw + 2 * sqA * alpha;
+  a1c = -2 * ((A - 1) - (A + 1) * cosw);
+  a2c = (A + 1) - (A - 1) * cosw - 2 * sqA * alpha;
+
+  pk_a0 = b0 / a0c;
+  pk_a1 = b1c / a0c;
+  pk_a2 = b2c / a0c;
+  pk_b1 = a1c / a0c;
+  pk_b2 = a2c / a0c;
+);
+
+function calc_turbo_peaking(sr) (
+  calc_peaking(sr, TURBO_BP_CENTER, TURBO_BP_Q, TURBO_BP_GAIN_DB);
+  turbo_bp_a0 = pk_a0; turbo_bp_a1 = pk_a1; turbo_bp_a2 = pk_a2;
+  turbo_bp_b1 = pk_b1; turbo_bp_b2 = pk_b2;
+);
+
+function calc_turbo_cut(sr) (
+  calc_peaking(sr, TURBO_CUT_FREQ, TURBO_CUT_Q, TURBO_CUT_GAIN_DB);
+  notch_a0 = pk_a0; notch_a1 = pk_a1; notch_a2 = pk_a2;
+  notch_b1 = pk_b1; notch_b2 = pk_b2;
+);
+
+function calc_turbo_lowshelf(sr) (
+  calc_lowshelf(sr, TURBO_LOW_SHELF_FREQ, TURBO_LOW_SHELF_Q, TURBO_LOW_SHELF_GAIN_DB);
+  turbo_ls_a0 = pk_a0; turbo_ls_a1 = pk_a1; turbo_ls_a2 = pk_a2;
+  turbo_ls_b1 = pk_b1; turbo_ls_b2 = pk_b2;
+);
+
+function calc_aa_lpf(sr) (
+  fc = sr * 0.48;
+  w0 = 2 * $pi * fc / sr;
+  alpha = sin(w0) / (2 * 0.707);
+  cosw = cos(w0);
+
+  b0 = (1 - cosw) / 2;
+  b1c = 1 - cosw;
+  b2c = (1 - cosw) / 2;
+  a0c = 1 + alpha;
+  a1c = -2 * cosw;
+  a2c = 1 - alpha;
+
+  aa_a0 = b0 / a0c;
+  aa_a1 = b1c / a0c;
+  aa_a2 = b2c / a0c;
+  aa_b1 = a1c / a0c;
+  aa_b2 = a2c / a0c;
+);
+
+function calc_tone_stack(sr, tone_pos) (
+  t = (tone_pos + 1) * 0.5;
+
+  f1 = 400 + t * 600;
+  q1 = 0.7 + t * 0.3;
+  gain1_db = (1 - t) * 6;
+  calc_peaking(sr, f1, q1, gain1_db);
+  ts1_a0 = pk_a0; ts1_a1 = pk_a1; ts1_a2 = pk_a2;
+  ts1_b1 = pk_b1; ts1_b2 = pk_b2;
+
+  f2 = 2000 + t * 2000;
+  q2 = 0.5 + t * 0.5;
+  gain2_db = t * 8;
+  calc_lowshelf(sr, f2, q2, gain2_db);
+  ts2_a0 = pk_a0; ts2_a1 = pk_a1; ts2_a2 = pk_a2;
+  ts2_b1 = pk_b1; ts2_b2 = pk_b2;
+);
+
+function soft_clip(x) (
+  s = x + SOFT_DC_BIAS;
+  g = s * SOFT_GAIN;
+  g2 = g * g;
+  y = g * (27 + g2) / (27 + 9 * g2);
+  y / SOFT_GAIN;
+);
+
+function hard_clip(x) (
+  g = x * 3.0;
+  abs_g = abs(g);
+  g2 = abs_g * abs_g;
+  g4 = g2 * g2;
+  g8 = g4 * g4;
+  denom = (1 + g8) ^ 0.125;
+  g / denom;
+);
+
+function get_os_factor(os_mode) (
+  os_mode == 0 ? 1 : (os_mode == 1 ? 4 : 8);
+);
+
+function process_channel(x) (
+  x = x * gain_lin;
+
+  dc_y = dc_alpha * (dc_y + x - dc_x);
+  dc_x = x;
+  x = dc_y;
+
+  y_hpf = hpf_a0 * x + hpf_a1 * hpf_x1 + hpf_b1 * hpf_y1;
+  hpf_x1 = x; hpf_y1 = y_hpf;
+  x = y_hpf;
+
+  x = soft_clip(x);
+
+  dc_mid_y = dc_alpha * (dc_mid_y + x - dc_mid_x);
+  dc_mid_x = x;
+  x = dc_mid_y;
+
+  turbo_mode == 1 ? (
+    x = x * TURBO_GAIN_II;
+
+    y_bp = turbo_bp_a0 * x + turbo_bp_a1 * turbo_x1 + turbo_bp_a2 * turbo_x2
+           - turbo_bp_b1 * turbo_y1 - turbo_bp_b2 * turbo_y2;
+    turbo_x2 = turbo_x1; turbo_x1 = x;
+    turbo_y2 = turbo_y1; turbo_y1 = y_bp;
+    x = y_bp;
+
+    y_cut = notch_a0 * x + notch_a1 * notch_x1 + notch_a2 * notch_x2
+            - notch_b1 * notch_y1 - notch_b2 * notch_y2;
+    notch_x2 = notch_x1; notch_x1 = x;
+    notch_y2 = notch_y1; notch_y1 = y_cut;
+    x = y_cut;
+
+    y_ls = turbo_ls_a0 * x + turbo_ls_a1 * turbo_ls_x1 + turbo_ls_a2 * turbo_ls_x2
+           - turbo_ls_b1 * turbo_ls_y1 - turbo_ls_b2 * turbo_ls_y2;
+    turbo_ls_x2 = turbo_ls_x1; turbo_ls_x1 = x;
+    turbo_ls_y2 = turbo_ls_y1; turbo_ls_y1 = y_ls;
+    x = y_ls;
+
+    x = soft_clip(x);
+  ) : (
+    x = x * TURBO_GAIN_I;
+    x = soft_clip(x);
+  );
+
+  x = hard_clip(x);
+
+  y_aa = aa_a0 * x + aa_a1 * aa_x1 + aa_a2 * aa_x2
+         - aa_b1 * aa_y1 - aa_b2 * aa_y2;
+  aa_x2 = aa_x1; aa_x1 = x;
+  aa_y2 = aa_y1; aa_y1 = y_aa;
+  x = y_aa;
+
+  y_ts1 = ts1_a0 * x + ts1_a1 * ts1_x1 + ts1_a2 * ts1_x2
+          - ts1_b1 * ts1_y1 - ts1_b2 * ts1_y2;
+  ts1_x2 = ts1_x1; ts1_x1 = x;
+  ts1_y2 = ts1_y1; ts1_y1 = y_ts1;
+  x = y_ts1;
+
+  y_ts2 = ts2_a0 * x + ts2_a1 * ts2_x1 + ts2_a2 * ts2_x2
+          - ts2_b1 * ts2_y1 - ts2_b2 * ts2_y2;
+  ts2_x2 = ts2_x1; ts2_x1 = x;
+  ts2_y2 = ts2_y1; ts2_y1 = y_ts2;
+  x = y_ts2;
+
+  gain_match = 1 / (1 + (gain_lin - 1) * 0.12);
+  x = x * level_lin * gain_match;
+
+  dc_out_y = dc_alpha * (dc_out_y + x - dc_out_x);
+  dc_out_x = x;
+  x = dc_out_y;
+
+  x;
+);
+
+@slider
+
+gain_lin = 1 + (slider1 / 100) ^ 2 * 99;
+tone_pos = slider2;
+level_lin = (slider3 / 100) ^ 2 * 1.0;
+turbo_mode = slider4;
+os_mode = slider5;
+
+@sample
+
+sr = srate;
+
+(sr != prev_sr || tone_pos != prev_tone || turbo_mode != prev_turbo) ? (
+  calc_hpf80(sr);
+  calc_turbo_peaking(sr);
+  calc_turbo_cut(sr);
+  calc_turbo_lowshelf(sr);
+  calc_aa_lpf(sr);
+  calc_tone_stack(sr, tone_pos);
+  prev_sr = sr;
+  prev_tone = tone_pos;
+  prev_turbo = turbo_mode;
+);
+
+dc_y = dc_in_y1; dc_x = dc_in_x1;
+hpf_x1 = hpf_x1_L; hpf_y1 = hpf_y1_L;
+dc_mid_y = dc_mid_y1; dc_mid_x = dc_mid_x1;
+turbo_x1 = turbo_x1_L; turbo_x2 = turbo_x2_L;
+turbo_y1 = turbo_y1_L; turbo_y2 = turbo_y2_L;
+notch_x1 = notch_x1_L; notch_x2 = notch_x2_L;
+notch_y1 = notch_y1_L; notch_y2 = notch_y2_L;
+turbo_ls_x1 = turbo_ls_x1_L; turbo_ls_x2 = turbo_ls_x2_L;
+turbo_ls_y1 = turbo_ls_y1_L; turbo_ls_y2 = turbo_ls_y2_L;
+aa_x1 = aa_x1_L; aa_x2 = aa_x2_L;
+aa_y1 = aa_y1_L; aa_y2 = aa_y2_L;
+ts1_x1 = ts1_x1_L; ts1_x2 = ts1_x2_L;
+ts1_y1 = ts1_y1_L; ts1_y2 = ts1_y2_L;
+ts2_x1 = ts2_x1_L; ts2_x2 = ts2_x2_L;
+ts2_y1 = ts2_y1_L; ts2_y2 = ts2_y2_L;
+dc_out_y = dc_out_y1; dc_out_x = dc_out_x1;
+
+spl0 = process_channel(spl0);
+
+dc_in_y1 = dc_y; dc_in_x1 = dc_x;
+hpf_x1_L = hpf_x1; hpf_y1_L = hpf_y1;
+dc_mid_y1 = dc_mid_y; dc_mid_x1 = dc_mid_x;
+turbo_x1_L = turbo_x1; turbo_x2_L = turbo_x2;
+turbo_y1_L = turbo_y1; turbo_y2_L = turbo_y2;
+notch_x1_L = notch_x1; notch_x2_L = notch_x2;
+notch_y1_L = notch_y1; notch_y2_L = notch_y2;
+turbo_ls_x1_L = turbo_ls_x1; turbo_ls_x2_L = turbo_ls_x2;
+turbo_ls_y1_L = turbo_ls_y1; turbo_ls_y2_L = turbo_ls_y2;
+aa_x1_L = aa_x1; aa_x2_L = aa_x2;
+aa_y1_L = aa_y1; aa_y2_L = aa_y2;
+ts1_x1_L = ts1_x1; ts1_x2_L = ts1_x2;
+ts1_y1_L = ts1_y1; ts1_y2_L = ts1_y2;
+ts2_x1_L = ts2_x1; ts2_x2_L = ts2_x2;
+ts2_y1_L = ts2_y1; ts2_y2_L = ts2_y2;
+dc_out_y1 = dc_out_y; dc_out_x1 = dc_out_x;
+
+gfx_in_buf[gfx_idx] = spl0;
+gfx_out_buf[gfx_idx] = spl0;
+gfx_idx = (gfx_idx + 1) % GFX_BUF_SIZE;
+
+dc_y = dc_in_y2; dc_x = dc_in_x2;
+hpf_x1 = hpf_x1_R; hpf_y1 = hpf_y1_R;
+dc_mid_y = dc_mid_y2; dc_mid_x = dc_mid_x2;
+turbo_x1 = turbo_x1_R; turbo_x2 = turbo_x2_R;
+turbo_y1 = turbo_y1_R; turbo_y2 = turbo_y2_R;
+notch_x1 = notch_x1_R; notch_x2 = notch_x2_R;
+notch_y1 = notch_y1_R; notch_y2 = notch_y2_R;
+turbo_ls_x1 = turbo_ls_x1_R; turbo_ls_x2 = turbo_ls_x2_R;
+turbo_ls_y1 = turbo_ls_y1_R; turbo_ls_y2 = turbo_ls_y2_R;
+aa_x1 = aa_x1_R; aa_x2 = aa_x2_R;
+aa_y1 = aa_y1_R; aa_y2 = aa_y2_R;
+ts1_x1 = ts1_x1_R; ts1_x2 = ts1_x2_R;
+ts1_y1 = ts1_y1_R; ts1_y2 = ts1_y2_R;
+ts2_x1 = ts2_x1_R; ts2_x2 = ts2_x2_R;
+ts2_y1 = ts2_y1_R; ts2_y2 = ts2_y2_R;
+dc_out_y = dc_out_y2; dc_out_x = dc_out_x2;
+
+spl1 = process_channel(spl1);
+
+dc_in_y2 = dc_y; dc_in_x2 = dc_x;
+hpf_x1_R = hpf_x1; hpf_y1_R = hpf_y1;
+dc_mid_y2 = dc_mid_y; dc_mid_x2 = dc_mid_x;
+turbo_x1_R = turbo_x1; turbo_x2_R = turbo_x2;
+turbo_y1_R = turbo_y1; turbo_y2_R = turbo_y2;
+notch_x1_R = notch_x1; notch_x2_R = notch_x2;
+notch_y1_R = notch_y1; notch_y2_R = notch_y2;
+turbo_ls_x1_R = turbo_ls_x1; turbo_ls_x2_R = turbo_ls_x2;
+turbo_ls_y1_R = turbo_ls_y1; turbo_ls_y2_R = turbo_ls_y2;
+aa_x1_R = aa_x1; aa_x2_R = aa_x2;
+aa_y1_R = aa_y1; aa_y2_R = aa_y2;
+ts1_x1_R = ts1_x1; ts1_x2_R = ts1_x2;
+ts1_y1_R = ts1_y1; ts1_y2_R = ts1_y2;
+ts2_x1_R = ts2_x1; ts2_x2_R = ts2_x2;
+ts2_y1_R = ts2_y1; ts2_y2_R = ts2_y2;
+dc_out_y2 = dc_out_y; dc_out_x2 = dc_out_x;
+
+@gfx 400 250
+
+gfx_set(0.1, 0.1, 0.12);
+gfx_rect(0, 0, 400, 250);
+
+gfx_set(0.9, 0.9, 0.9);
+gfx_x = 10; gfx_y = 5;
+gfx_drawstr("Boss DS-2 Turbo Distortion");
+
+gfx_set(0.15, 0.15, 0.2);
+gfx_rect(5, 22, 390, 105);
+
+gfx_set(0.3, 0.5, 1.0);
+i = 0;
+loop(GFX_BUF_SIZE - 1,
+  x1 = 5 + i * 385 / GFX_BUF_SIZE;
+  x2 = 5 + (i + 1) * 385 / GFX_BUF_SIZE;
+  y1 = 65 - gfx_in_buf[(gfx_idx + i) % GFX_BUF_SIZE] * 35;
+  y2 = 65 - gfx_in_buf[(gfx_idx + i + 1) % GFX_BUF_SIZE] * 35;
+  gfx_line(x1, y1, x2, y2);
+  i += 1;
+);
+
+gfx_set(1.0, 0.6, 0.1);
+i = 0;
+loop(GFX_BUF_SIZE - 1,
+  x1 = 5 + i * 385 / GFX_BUF_SIZE;
+  x2 = 5 + (i + 1) * 385 / GFX_BUF_SIZE;
+  y1 = 65 - gfx_out_buf[(gfx_idx + i) % GFX_BUF_SIZE] * 35;
+  y2 = 65 - gfx_out_buf[(gfx_idx + i + 1) % GFX_BUF_SIZE] * 35;
+  gfx_line(x1, y1, x2, y2);
+  i += 1;
+);
+
+gfx_set(0.3, 0.5, 1.0);
+gfx_x = 10; gfx_y = 108;
+gfx_drawstr("IN");
+gfx_set(1.0, 0.6, 0.1);
+gfx_x = 40; gfx_y = 108;
+gfx_drawstr("OUT");
+
+gfx_set(0.9, 0.3, 0.3);
+gfx_x = 300; gfx_y = 5;
+turbo_mode == 1 ? gfx_drawstr("TURBO II") : gfx_drawstr("TURBO I");
+
+gfx_set(0.6, 0.8, 0.6);
+gfx_x = 300; gfx_y = 108;
+os_mode == 0 ? gfx_drawstr("OS: Off") : (
+  os_mode == 1 ? gfx_drawstr("OS: 4x") : gfx_drawstr("OS: 8x")
+);
+
+gfx_set(0.15, 0.15, 0.2);
+gfx_rect(5, 125, 390, 240);
+
+gfx_set(0.7, 0.7, 0.7);
+gfx_x = 10; gfx_y = 126;
+gfx_drawstr("Tone Response");
+
+gfx_set(0.3, 0.3, 0.3);
+gfx_line(5, 180, 395, 180);
+
+gfx_set(0.2, 1.0, 0.4);
+t = (tone_pos + 1) * 0.5;
+f1 = 400 + t * 600;
+q1 = 0.7 + t * 0.3;
+gain1_db = (1 - t) * 6;
+f2 = 2000 + t * 2000;
+q2 = 0.5 + t * 0.5;
+gain2_db = t * 8;
+
+prev_px = -1; prev_py = -1;
+num_pts = 120;
+i = 0;
+loop(num_pts,
+  f = 20 * (1000 ^ (i / (num_pts - 1)));
+
+  A1 = 10 ^ (gain1_db / 40);
+  A2 = 10 ^ (gain2_db / 40);
+  r1 = f / max(f1, 1);
+  r2 = f / max(f2, 1);
+
+  g1 = 1 + (A1 - 1) / (1 + (r1 - 1/max(r1,0.001))^2 * q1 * q1);
+  g2 = 1 + (A2 - 1) / (1 + (r2 - 1/max(r2,0.001))^2 * q2 * q2);
+  total_g = g1 * g2;
+
+  total_db = 20 * log10(max(total_g, 0.001));
+
+  px = 5 + i * 390 / num_pts;
+  py = 180 - total_db * 4;
+  py = min(max(py, 130), 238);
+
+  prev_px >= 0 ? gfx_line(prev_px, prev_py, px, py);
+
+  prev_px = px;
+  prev_py = py;
+  i += 1;
+);
+
+gfx_set(0.5, 0.5, 0.5);
+gfx_x = 5; gfx_y = 240;
+gfx_drawstr("20");
+gfx_x = 100; gfx_y = 240;
+gfx_drawstr("200");
+gfx_x = 200; gfx_y = 240;
+gfx_drawstr("2k");
+gfx_x = 330; gfx_y = 240;
+gfx_drawstr("20k");
