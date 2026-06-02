@@ -16,7 +16,7 @@ desc:Lozengrad Pedal
 slider1:5<0,100,1>Gain
 slider2:0<-1,1,0.01>Tone
 slider3:50<0,100,1>Level
-slider4:0<0,2,1{Turbo I,Turbo II,DS-1}>Pedal Mode
+slider4:0<0,3,1{Turbo I,Turbo II,DS-1,Green TS}>Pedal Mode
 slider5:1<0,2,1{Off,4x,8x}>Oversampling
 
 @init
@@ -76,6 +76,23 @@ ds1_hpf_x1_L = 0; ds1_hpf_y1_L = 0;
 ds1_hpf_x1_R = 0; ds1_hpf_y1_R = 0;
 ds1_hpf_a0 = 0; ds1_hpf_a1 = 0; ds1_hpf_b1 = 0;
 
+// Green TS tone stack state
+ts_hpf_x1_L = 0; ts_hpf_y1_L = 0;
+ts_hpf_x1_R = 0; ts_hpf_y1_R = 0;
+ts_hpf_a0 = 0; ts_hpf_a1 = 0; ts_hpf_b1 = 0;
+
+ts_shelf_x1_L = 0; ts_shelf_x2_L = 0; ts_shelf_y1_L = 0; ts_shelf_y2_L = 0;
+ts_shelf_x1_R = 0; ts_shelf_x2_R = 0; ts_shelf_y1_R = 0; ts_shelf_y2_R = 0;
+ts_shelf_a0 = 1; ts_shelf_a1 = 0; ts_shelf_a2 = 0; ts_shelf_b1 = 0; ts_shelf_b2 = 0;
+
+ts_c4_x1_L = 0; ts_c4_y1_L = 0;
+ts_c4_x1_R = 0; ts_c4_y1_R = 0;
+ts_c4_a0 = 0; ts_c4_a1 = 0; ts_c4_b1 = 0;
+
+ts_lp_x1_L = 0; ts_lp_y1_L = 0;
+ts_lp_x1_R = 0; ts_lp_y1_R = 0;
+ts_lp_a0 = 0; ts_lp_a1 = 0; ts_lp_b1 = 0;
+
 pk_a0 = 1; pk_a1 = 0; pk_a2 = 0; pk_b1 = 0; pk_b2 = 0;
 
 SOFT_DC_BIAS = 0.02;
@@ -83,11 +100,11 @@ SOFT_GAIN = 2.5;
 TURBO_GAIN_I = 1.0;
 TURBO_GAIN_II = 1.8;
 TURBO_BP_CENTER = 900;
-TURBO_BP_Q = 1.3;
-TURBO_BP_GAIN_DB = 9;
+TURBO_BP_Q = 1.0;
+TURBO_BP_GAIN_DB = 6;
 TURBO_CUT_FREQ = 2500;
 TURBO_CUT_Q = 2.0;
-TURBO_CUT_GAIN_DB = -9;
+TURBO_CUT_GAIN_DB = -6;
 TURBO_LOW_SHELF_FREQ = 200;
 TURBO_LOW_SHELF_Q = 0.7;
 TURBO_LOW_SHELF_GAIN_DB = -3;
@@ -97,6 +114,16 @@ HARD_CLIP_N = 8;
 DS1_THRESHOLD = 0.7;
 DS1_LPF_FREQ = 720;
 DS1_HPF_FREQ = 1060;
+
+// Green TS (Tube Screamer) parametreleri
+TS_DIST_POS = 1.2;
+TS_DIST_NEG = 0.8;
+TS_BLEND_DIST = 0.7;
+TS_BLEND_CLEAN = 0.3;
+TS_HPF_FREQ = 720;
+TS_SHELF_FREQ = 1500;
+TS_C4_FREQ = 25000;
+TS_LP_FREQ = 5000;
 
 gfx_idx = 0;
 GFX_BUF_SIZE = 400;
@@ -153,6 +180,27 @@ function calc_lowshelf(sr, freq, q, gain_db) (
   a0c = (A + 1) - (A - 1) * cosw + 2 * sqA * alpha;
   a1c = -2 * ((A - 1) - (A + 1) * cosw);
   a2c = (A + 1) - (A - 1) * cosw - 2 * sqA * alpha;
+
+  pk_a0 = b0 / a0c;
+  pk_a1 = b1c / a0c;
+  pk_a2 = b2c / a0c;
+  pk_b1 = a1c / a0c;
+  pk_b2 = a2c / a0c;
+);
+
+function calc_highshelf(sr, freq, q, gain_db) (
+  A = 10 ^ (gain_db / 40);
+  w0 = 2 * $pi * freq / sr;
+  alpha = sin(w0) / (2 * q);
+  cosw = cos(w0);
+  sqA = sqrt(A);
+
+  b0 = A * ((A + 1) - (A - 1) * cosw + 2 * sqA * alpha);
+  b1c = -2 * A * ((A - 1) - (A + 1) * cosw);
+  b2c = A * ((A + 1) - (A - 1) * cosw - 2 * sqA * alpha);
+  a0c = (A + 1) + (A - 1) * cosw + 2 * sqA * alpha;
+  a1c = 2 * ((A - 1) + (A + 1) * cosw);
+  a2c = (A + 1) + (A - 1) * cosw - 2 * sqA * alpha;
 
   pk_a0 = b0 / a0c;
   pk_a1 = b1c / a0c;
@@ -238,6 +286,41 @@ function ds1_hard_clip(x) (
   x > DS1_THRESHOLD ? DS1_THRESHOLD : (x < -DS1_THRESHOLD ? -DS1_THRESHOLD : x);
 );
 
+// Tube Screamer asimetrik soft clipping (3 diyotlu yapı)
+// tanh(x) ≈ x / sqrt(1 + x^2) (EEL2'de sinh/cosh/tanh yok, sqrt var)
+function ts_soft_clip(x) (
+  g = x > 0 ? x * TS_DIST_POS : x * TS_DIST_NEG;
+  g / sqrt(1 + g * g);
+);
+
+function calc_ts_tone(sr) (
+  // HPF 720Hz, 1st order (mid-hump oluşumu)
+  wc = 2 * $pi * TS_HPF_FREQ;
+  k = 2 * sr;
+  ts_hpf_a0 = k / (k + wc);
+  ts_hpf_a1 = -ts_hpf_a0;
+  ts_hpf_b1 = (k - wc) / (k + wc);
+
+  // C4 (47pF) LPF: harsh tiz parazitleri yumuşatır
+  wc_c4 = 2 * $pi * TS_C4_FREQ;
+  ts_c4_a0 = wc_c4 / (k + wc_c4);
+  ts_c4_a1 = 0;
+  ts_c4_b1 = (k - wc_c4) / (k + wc_c4);
+
+  // High-Shelf 1500Hz, tone_pos -1..+1 -> -10..+10 dB
+  shelf_db = tone_pos * 10;
+  calc_highshelf(sr, TS_SHELF_FREQ, 0.7, shelf_db);
+  ts_shelf_a0 = pk_a0; ts_shelf_a1 = pk_a1; ts_shelf_a2 = pk_a2;
+  ts_shelf_b1 = pk_b1; ts_shelf_b2 = pk_b2;
+
+  // Shelf sonrası LP 5kHz: 20kHz'deki boost'u keser, op-amp GBW simülasyonu
+  wc_lp = 2 * $pi * TS_LP_FREQ;
+  k2 = 2 * sr;
+  ts_lp_a0 = wc_lp / (k2 + wc_lp);
+  ts_lp_a1 = 0;
+  ts_lp_b1 = (k2 - wc_lp) / (k2 + wc_lp);
+);
+
 function soft_clip(x) (
   s = x + SOFT_DC_BIAS;
   g = s * SOFT_GAIN;
@@ -294,7 +377,45 @@ function process_ds1(x) (
 
   t = (tone_pos + 1) * 0.5;
   x = (y_lpf * (1 - t) + y_hpf2 * t) * 1.4;
-  x = x * 6.0;
+  x = x * 8.5;
+  x;
+);
+
+function process_ts(x) (
+  // Temiz sinyali sakla (blend için)
+  clean = x;
+
+  // Asimetrik soft clipping (3 diyotlu yapı)
+  x = ts_soft_clip(x);
+
+  // C4 (47pF) LPF: harsh tiz parazitleri yumuşatır
+  y_c4 = ts_c4_a0 * x + ts_c4_a1 * ts_c4_x1 + ts_c4_b1 * ts_c4_y1;
+  ts_c4_x1 = x; ts_c4_y1 = y_c4;
+  x = y_c4;
+
+  // Kırpılmış + temiz sinyal blend (Tube Screamer sırrı)
+  // dist:clean = 0.7:0.3
+  x = x * TS_BLEND_DIST + clean * TS_BLEND_CLEAN;
+
+  // HPF 720Hz (mid-hump oluşumu, R6+C3 RC ağı)
+  y_hpf = ts_hpf_a0 * x + ts_hpf_a1 * ts_hpf_x1 + ts_hpf_b1 * ts_hpf_y1;
+  ts_hpf_x1 = x; ts_hpf_y1 = y_hpf;
+  x = y_hpf;
+
+  // High-Shelf tone kontrolü (U1B + B20k + C6 + R10)
+  y_shelf = ts_shelf_a0 * x + ts_shelf_a1 * ts_shelf_x1 + ts_shelf_a2 * ts_shelf_x2
+            - ts_shelf_b1 * ts_shelf_y1 - ts_shelf_b2 * ts_shelf_y2;
+  ts_shelf_x2 = ts_shelf_x1; ts_shelf_x1 = x;
+  ts_shelf_y2 = ts_shelf_y1; ts_shelf_y1 = y_shelf;
+  x = y_shelf;
+
+  // Shelf sonrası LP 5kHz: 20kHz boost'unu keser
+  y_lp = ts_lp_a0 * x + ts_lp_a1 * ts_lp_x1 + ts_lp_b1 * ts_lp_y1;
+  ts_lp_x1 = x; ts_lp_y1 = y_lp;
+  x = y_lp;
+
+  // Post-gain: clipping + HPF 720 RMS kaybını telafi
+  x = x * 20.0;
   x;
 );
 
@@ -372,6 +493,8 @@ function process_channel(x) (
   ) : turbo_mode == 1 ? (
     x = process_turbo_ii(x);
     x = process_post_clip(x);
+  ) : turbo_mode == 3 ? (
+    x = process_ts(x);
   ) : (
     x = process_turbo_i(x);
     x = process_post_clip(x);
@@ -398,6 +521,7 @@ sr = srate;
   calc_turbo_cut(sr);
   calc_turbo_lowshelf(sr);
   calc_ds1_tone(sr);
+  calc_ts_tone(sr);
   calc_aa_lpf(sr);
   calc_tone_stack(sr, tone_pos);
   prev_sr = sr;
@@ -416,6 +540,11 @@ turbo_ls_x1 = turbo_ls_x1_L; turbo_ls_x2 = turbo_ls_x2_L;
 turbo_ls_y1 = turbo_ls_y1_L; turbo_ls_y2 = turbo_ls_y2_L;
 ds1_lpf_x1 = ds1_lpf_x1_L; ds1_lpf_y1 = ds1_lpf_y1_L;
 ds1_hpf_x1 = ds1_hpf_x1_L; ds1_hpf_y1 = ds1_hpf_y1_L;
+ts_hpf_x1 = ts_hpf_x1_L; ts_hpf_y1 = ts_hpf_y1_L;
+ts_shelf_x1 = ts_shelf_x1_L; ts_shelf_x2 = ts_shelf_x2_L;
+ts_shelf_y1 = ts_shelf_y1_L; ts_shelf_y2 = ts_shelf_y2_L;
+ts_c4_x1 = ts_c4_x1_L; ts_c4_y1 = ts_c4_y1_L;
+ts_lp_x1 = ts_lp_x1_L; ts_lp_y1 = ts_lp_y1_L;
 aa_x1 = aa_x1_L; aa_x2 = aa_x2_L;
 aa_y1 = aa_y1_L; aa_y2 = aa_y2_L;
 ts1_x1 = ts1_x1_L; ts1_x2 = ts1_x2_L;
@@ -437,6 +566,11 @@ turbo_ls_x1_L = turbo_ls_x1; turbo_ls_x2_L = turbo_ls_x2;
 turbo_ls_y1_L = turbo_ls_y1; turbo_ls_y2_L = turbo_ls_y2;
 ds1_lpf_x1_L = ds1_lpf_x1; ds1_lpf_y1_L = ds1_lpf_y1;
 ds1_hpf_x1_L = ds1_hpf_x1; ds1_hpf_y1_L = ds1_hpf_y1;
+ts_hpf_x1_L = ts_hpf_x1; ts_hpf_y1_L = ts_hpf_y1;
+ts_shelf_x1_L = ts_shelf_x1; ts_shelf_x2_L = ts_shelf_x2;
+ts_shelf_y1_L = ts_shelf_y1; ts_shelf_y2_L = ts_shelf_y2;
+ts_c4_x1_L = ts_c4_x1; ts_c4_y1_L = ts_c4_y1;
+ts_lp_x1_L = ts_lp_x1; ts_lp_y1_L = ts_lp_y1;
 aa_x1_L = aa_x1; aa_x2_L = aa_x2;
 aa_y1_L = aa_y1; aa_y2_L = aa_y2;
 ts1_x1_L = ts1_x1; ts1_x2_L = ts1_x2;
@@ -460,6 +594,11 @@ turbo_ls_x1 = turbo_ls_x1_R; turbo_ls_x2 = turbo_ls_x2_R;
 turbo_ls_y1 = turbo_ls_y1_R; turbo_ls_y2 = turbo_ls_y2_R;
 ds1_lpf_x1 = ds1_lpf_x1_R; ds1_lpf_y1 = ds1_lpf_y1_R;
 ds1_hpf_x1 = ds1_hpf_x1_R; ds1_hpf_y1 = ds1_hpf_y1_R;
+ts_hpf_x1 = ts_hpf_x1_R; ts_hpf_y1 = ts_hpf_y1_R;
+ts_shelf_x1 = ts_shelf_x1_R; ts_shelf_x2 = ts_shelf_x2_R;
+ts_shelf_y1 = ts_shelf_y1_R; ts_shelf_y2 = ts_shelf_y2_R;
+ts_c4_x1 = ts_c4_x1_R; ts_c4_y1 = ts_c4_y1_R;
+ts_lp_x1 = ts_lp_x1_R; ts_lp_y1 = ts_lp_y1_R;
 aa_x1 = aa_x1_R; aa_x2 = aa_x2_R;
 aa_y1 = aa_y1_R; aa_y2 = aa_y2_R;
 ts1_x1 = ts1_x1_R; ts1_x2 = ts1_x2_R;
@@ -481,6 +620,11 @@ turbo_ls_x1_R = turbo_ls_x1; turbo_ls_x2_R = turbo_ls_x2;
 turbo_ls_y1_R = turbo_ls_y1; turbo_ls_y2_R = turbo_ls_y2;
 ds1_lpf_x1_R = ds1_lpf_x1; ds1_lpf_y1_R = ds1_lpf_y1;
 ds1_hpf_x1_R = ds1_hpf_x1; ds1_hpf_y1_R = ds1_hpf_y1;
+ts_hpf_x1_R = ts_hpf_x1; ts_hpf_y1_R = ts_hpf_y1;
+ts_shelf_x1_R = ts_shelf_x1; ts_shelf_x2_R = ts_shelf_x2;
+ts_shelf_y1_R = ts_shelf_y1; ts_shelf_y2_R = ts_shelf_y2;
+ts_c4_x1_R = ts_c4_x1; ts_c4_y1_R = ts_c4_y1;
+ts_lp_x1_R = ts_lp_x1; ts_lp_y1_R = ts_lp_y1;
 aa_x1_R = aa_x1; aa_x2_R = aa_x2;
 aa_y1_R = aa_y1; aa_y2_R = aa_y2;
 ts1_x1_R = ts1_x1; ts1_x2_R = ts1_x2;
@@ -533,7 +677,9 @@ gfx_drawstr("OUT");
 gfx_set(0.9, 0.3, 0.3);
 gfx_x = 300; gfx_y = 5;
 turbo_mode == 0 ? gfx_drawstr("TURBO I") : (
-  turbo_mode == 1 ? gfx_drawstr("TURBO II") : gfx_drawstr("DS-1")
+  turbo_mode == 1 ? gfx_drawstr("TURBO II") : (
+    turbo_mode == 2 ? gfx_drawstr("DS-1") : gfx_drawstr("GREEN TS")
+  )
 );
 
 gfx_set(0.6, 0.8, 0.6);
@@ -574,6 +720,20 @@ loop(num_pts,
     g_lpf = 1 / sqrt(1 + (f / 720) ^ 2);
     g_hpf = f / 1060 / sqrt(1 + (f / 1060) ^ 2);
     total_g = g_lpf * (1 - t) + g_hpf * t;
+  ) : turbo_mode == 3 ? (
+    // Green TS: HPF 720 + High-Shelf 1500 + LP 5k
+    r_hpf = f / 720;
+    g_hpf_ts = r_hpf / sqrt(1 + r_hpf * r_hpf);
+
+    shelf_db_ts = tone_pos * 10;
+    A_ts = 10 ^ (shelf_db_ts / 20);
+    r_shelf = f / 1500;
+    g_shelf = 1 + (A_ts - 1) * r_shelf * r_shelf / (1 + r_shelf * r_shelf);
+
+    r_lp = f / 5000;
+    g_lp = 1 / sqrt(1 + r_lp * r_lp);
+
+    total_g = g_hpf_ts * g_shelf * g_lp;
   ) : (
     A1 = 10 ^ (gain1_db / 40);
     A2 = 10 ^ (gain2_db / 40);
