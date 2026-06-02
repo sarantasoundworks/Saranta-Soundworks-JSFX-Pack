@@ -16,8 +16,12 @@ desc:Lozengrad Pedal
 slider1:5<0,100,1>Gain
 slider2:0<-1,1,0.01>Tone
 slider3:50<0,100,1>Level
-slider4:0<0,4,1{Turbo I,Turbo II,DS-1,Green TS,Fortin 33}>Pedal Mode
+slider4:0<0,6,1{Turbo I,Turbo II,DS-1,Green TS,Fortin 33,Horizon,MT-2}>Pedal Mode
 slider5:1<0,2,1{Off,4x,8x}>Oversampling
+slider6:0<-15,15,0.1>Low
+slider7:1000<200,5000,1>Mid Freq
+slider8:0<-15,15,0.1>Mid Gain
+slider9:0<-15,15,0.1>High
 
 @init
 
@@ -102,6 +106,45 @@ f33_pk_x1_L = 0; f33_pk_x2_L = 0; f33_pk_y1_L = 0; f33_pk_y2_L = 0;
 f33_pk_x1_R = 0; f33_pk_x2_R = 0; f33_pk_y1_R = 0; f33_pk_y2_R = 0;
 f33_pk_a0 = 1; f33_pk_a1 = 0; f33_pk_a2 = 0; f33_pk_b1 = 0; f33_pk_b2 = 0;
 
+// Horizon Devices state (HPF + Peaking + High-Shelf)
+hd_hpf_x1_L = 0; hd_hpf_y1_L = 0;
+hd_hpf_x1_R = 0; hd_hpf_y1_R = 0;
+hd_hpf_a0 = 0; hd_hpf_a1 = 0; hd_hpf_b1 = 0;
+
+hd_pk_x1_L = 0; hd_pk_x2_L = 0; hd_pk_y1_L = 0; hd_pk_y2_L = 0;
+hd_pk_x1_R = 0; hd_pk_x2_R = 0; hd_pk_y1_R = 0; hd_pk_y2_R = 0;
+hd_pk_a0 = 1; hd_pk_a1 = 0; hd_pk_a2 = 0; hd_pk_b1 = 0; hd_pk_b2 = 0;
+
+hd_sh_x1_L = 0; hd_sh_x2_L = 0; hd_sh_y1_L = 0; hd_sh_y2_L = 0;
+hd_sh_x1_R = 0; hd_sh_x2_R = 0; hd_sh_y1_R = 0; hd_sh_y2_R = 0;
+hd_sh_a0 = 1; hd_sh_a1 = 0; hd_sh_a2 = 0; hd_sh_b0 = 1; hd_sh_b1 = 0; hd_sh_b2 = 0;
+
+// MT-2 state (HPF 35Hz + Gyrator1 250Hz + Gyrator2 1kHz)
+mt2_hpf_x1_L = 0; mt2_hpf_y1_L = 0;
+mt2_hpf_x1_R = 0; mt2_hpf_y1_R = 0;
+mt2_hpf_a0 = 0; mt2_hpf_a1 = 0; mt2_hpf_b1 = 0;
+
+mt2_gyr1_x1_L = 0; mt2_gyr1_x2_L = 0; mt2_gyr1_y1_L = 0; mt2_gyr1_y2_L = 0;
+mt2_gyr1_x1_R = 0; mt2_gyr1_x2_R = 0; mt2_gyr1_y1_R = 0; mt2_gyr1_y2_R = 0;
+mt2_gyr1_a0 = 1; mt2_gyr1_a1 = 0; mt2_gyr1_a2 = 0; mt2_gyr1_b1 = 0; mt2_gyr1_b2 = 0;
+
+mt2_gyr2_x1_L = 0; mt2_gyr2_x2_L = 0; mt2_gyr2_y1_L = 0; mt2_gyr2_y2_L = 0;
+mt2_gyr2_x1_R = 0; mt2_gyr2_x2_R = 0; mt2_gyr2_y1_R = 0; mt2_gyr2_y2_R = 0;
+mt2_gyr2_a0 = 1; mt2_gyr2_a1 = 0; mt2_gyr2_a2 = 0; mt2_gyr2_b1 = 0; mt2_gyr2_b2 = 0;
+
+// Post-EQ state (Low 100Hz + Mid sweep + High 5kHz) - tüm modlar için ortak
+post_eq_low_x1_L = 0; post_eq_low_x2_L = 0; post_eq_low_y1_L = 0; post_eq_low_y2_L = 0;
+post_eq_low_x1_R = 0; post_eq_low_x2_R = 0; post_eq_low_y1_R = 0; post_eq_low_y2_R = 0;
+post_eq_low_a0 = 1; post_eq_low_a1 = 0; post_eq_low_a2 = 0; post_eq_low_b1 = 0; post_eq_low_b2 = 0;
+
+post_eq_mid_x1_L = 0; post_eq_mid_x2_L = 0; post_eq_mid_y1_L = 0; post_eq_mid_y2_L = 0;
+post_eq_mid_x1_R = 0; post_eq_mid_x2_R = 0; post_eq_mid_y1_R = 0; post_eq_mid_y2_R = 0;
+post_eq_mid_a0 = 1; post_eq_mid_a1 = 0; post_eq_mid_a2 = 0; post_eq_mid_b1 = 0; post_eq_mid_b2 = 0;
+
+post_eq_high_x1_L = 0; post_eq_high_x2_L = 0; post_eq_high_y1_L = 0; post_eq_high_y2_L = 0;
+post_eq_high_x1_R = 0; post_eq_high_x2_R = 0; post_eq_high_y1_R = 0; post_eq_high_y2_R = 0;
+post_eq_high_a0 = 1; post_eq_high_a1 = 0; post_eq_high_a2 = 0; post_eq_high_b1 = 0; post_eq_high_b2 = 0;
+
 pk_a0 = 1; pk_a1 = 0; pk_a2 = 0; pk_b1 = 0; pk_b2 = 0;
 
 SOFT_DC_BIAS = 0.02;
@@ -139,19 +182,38 @@ F33_HPF_FREQ = 300;
 F33_PK_FREQ = 1000;
 F33_PK_Q = 1.0;
 
-gfx_idx = 0;
-GFX_BUF_SIZE = 400;
-i = 0;
-loop(GFX_BUF_SIZE,
-  gfx_in_buf[i] = 0;
-  gfx_out_buf[i] = 0;
-  i += 1;
-);
+// Horizon Devices Precision Drive parametreleri
+HD_HPF_FREQ = 400;
+HD_PK_FREQ = 800;
+HD_PK_Q = 1.5;
+HD_PK_GAIN_DB = 4;
+HD_SHELF_FREQ = 1500;
+HD_SHELF_Q = 1.0;
+HD_POST_GAIN = 4.0;
+
+// Boss MT-2 Metal Zone parametreleri
+MT2_HPF_FREQ = 35;
+MT2_GYR1_FREQ = 250;
+MT2_GYR1_Q = 2.0;
+MT2_GYR2_FREQ = 1000;
+MT2_GYR2_Q = 2.0;
+MT2_SOFT_CLIP = 0.7;
+MT2_HARD_CLIP = 0.4;
+MT2_POST_GAIN = 2.0;
+MT2_LOW_FREQ = 100;
+MT2_LOW_Q = 0.7;
+MT2_HIGH_FREQ = 5000;
+MT2_HIGH_Q = 0.7;
+MT2_MID_Q = 1.0;
 
 prev_sr = -1;
 prev_tone = -999;
 prev_os = -1;
 prev_turbo = -1;
+prev_post_low = -999;
+prev_post_mid_freq = -999;
+prev_post_mid_db = -999;
+prev_post_high = -999;
 
 function calc_hpf80(sr) (
   wc = 2 * $pi * 80;
@@ -321,9 +383,9 @@ function calc_ts_tone(sr) (
   ts_c4_a1 = 0;
   ts_c4_b1 = (k - wc_c4) / (k + wc_c4);
 
-  // High-Shelf 1500Hz, tone_pos -1..+1 -> -10..+10 dB
+  // Peaking EQ 1500Hz, tone_pos -1..+1 -> -10..+10 dB
   shelf_db = tone_pos * 10;
-  calc_highshelf(sr, TS_SHELF_FREQ, 0.7, shelf_db);
+  calc_peaking(sr, 1500, 1.0, shelf_db);
   ts_shelf_a0 = pk_a0; ts_shelf_a1 = pk_a1; ts_shelf_a2 = pk_a2;
   ts_shelf_b1 = pk_b1; ts_shelf_b2 = pk_b2;
 
@@ -348,6 +410,67 @@ function calc_f33_tone(sr) (
   calc_peaking(sr, F33_PK_FREQ, F33_PK_Q, pk_db);
   f33_pk_a0 = pk_a0; f33_pk_a1 = pk_a1; f33_pk_a2 = pk_a2;
   f33_pk_b1 = pk_b1; f33_pk_b2 = pk_b2;
+);
+
+function calc_hd_tone(sr) (
+  // 1st order HPF @ 400Hz (bas sıkılaştırma)
+  wc = 2 * $pi * HD_HPF_FREQ;
+  k = 2 * sr;
+  hd_hpf_a0 = k / (k + wc);
+  hd_hpf_a1 = -hd_hpf_a0;
+  hd_hpf_b1 = (k - wc) / (k + wc);
+
+  // Peaking EQ @ 800Hz, Q=1.5, +4 dB (mid presence)
+  calc_peaking(sr, HD_PK_FREQ, HD_PK_Q, HD_PK_GAIN_DB);
+  hd_pk_a0 = pk_a0; hd_pk_a1 = pk_a1; hd_pk_a2 = pk_a2;
+  hd_pk_b1 = pk_b1; hd_pk_b2 = pk_b2;
+
+  // Peaking EQ @ 1000Hz (Bright, slider2 -1..+1 -> -10..+10 dB)
+  shelf_db = slider2 * 10;
+  calc_peaking(sr, 1000, 1.0, shelf_db);
+  hd_sh_a0 = pk_a0; hd_sh_a1 = pk_a1; hd_sh_a2 = pk_a2;
+  hd_sh_b0 = b0; hd_sh_b1 = pk_b1; hd_sh_b2 = pk_b2;
+);
+
+function calc_mt2_tone(sr) (
+  // 1st order HPF @ 35Hz (DC offset removal)
+  wc = 2 * $pi * MT2_HPF_FREQ;
+  k = 2 * sr;
+  mt2_hpf_a0 = k / (k + wc);
+  mt2_hpf_a1 = -mt2_hpf_a0;
+  mt2_hpf_b1 = (k - wc) / (k + wc);
+
+  // Gyrator 1: Peaking @ 250Hz, Q=2.0, gain = DIST (slider1)
+  gyr1_db = (slider1 / 100) * 20;
+  calc_peaking(sr, MT2_GYR1_FREQ, MT2_GYR1_Q, gyr1_db);
+  mt2_gyr1_a0 = pk_a0; mt2_gyr1_a1 = pk_a1; mt2_gyr1_a2 = pk_a2;
+  mt2_gyr1_b1 = pk_b1; mt2_gyr1_b2 = pk_b2;
+
+  // Gyrator 2: Peaking @ 1kHz, Q=2.0, gain = DIST (slider1)
+  gyr2_db = (slider1 / 100) * 15;
+  calc_peaking(sr, MT2_GYR2_FREQ, MT2_GYR2_Q, gyr2_db);
+  mt2_gyr2_a0 = pk_a0; mt2_gyr2_a1 = pk_a1; mt2_gyr2_a2 = pk_a2;
+  mt2_gyr2_b1 = pk_b1; mt2_gyr2_b2 = pk_b2;
+);
+
+function calc_post_eq(sr) (
+  // Low: Peaking @ 100Hz, Q=0.7, gain = slider6 (-15..+15 dB)
+  low_db = slider6;
+  calc_peaking(sr, MT2_LOW_FREQ, MT2_LOW_Q, low_db);
+  post_eq_low_a0 = pk_a0; post_eq_low_a1 = pk_a1; post_eq_low_a2 = pk_a2;
+  post_eq_low_b1 = pk_b1; post_eq_low_b2 = pk_b2;
+
+  // Mid: Peaking @ slider7 (200-5000Hz), Q=1.0, gain = slider8 (-15..+15 dB)
+  mid_db = slider8;
+  calc_peaking(sr, slider7, MT2_MID_Q, mid_db);
+  post_eq_mid_a0 = pk_a0; post_eq_mid_a1 = pk_a1; post_eq_mid_a2 = pk_a2;
+  post_eq_mid_b1 = pk_b1; post_eq_mid_b2 = pk_b2;
+
+  // High: Peaking @ 5kHz, Q=0.7, gain = slider9 (-15..+15 dB)
+  high_db = slider9;
+  calc_peaking(sr, MT2_HIGH_FREQ, MT2_HIGH_Q, high_db);
+  post_eq_high_a0 = pk_a0; post_eq_high_a1 = pk_a1; post_eq_high_a2 = pk_a2;
+  post_eq_high_b1 = pk_b1; post_eq_high_b2 = pk_b2;
 );
 
 function soft_clip(x) (
@@ -385,7 +508,7 @@ function process_pre(x) (
 );
 
 function process_post(x) (
-  gain_match = 1 / (1 + (gain_lin - 1) * 0.12);
+  gain_match = 1 / (1 + (gain_lin - 1) * 0.25);
   x = x * level_lin * gain_match;
 
   dc_out_y = dc_alpha * (dc_out_y + x - dc_out_x);
@@ -469,6 +592,83 @@ function process_f33(x) (
   x;
 );
 
+function process_hd(x) (
+  // 1. HPF @ 400Hz (bas sıkılaştırma)
+  y_hpf = hd_hpf_a0 * x + hd_hpf_a1 * hd_hpf_x1 + hd_hpf_b1 * hd_hpf_y1;
+  hd_hpf_x1 = x; hd_hpf_y1 = y_hpf;
+
+  // 2. Soft clipping (simetrik 1N4148, tanh benzeri)
+  g = y_hpf * gain_lin;
+  y_clip = g / sqrt(1 + g * g);
+
+  // 3. Peaking EQ @ 800Hz (mid presence)
+  y_pk = hd_pk_a0 * y_clip + hd_pk_a1 * hd_pk_x1 + hd_pk_a2 * hd_pk_x2
+         - hd_pk_b1 * hd_pk_y1 - hd_pk_b2 * hd_pk_y2;
+  hd_pk_x2 = hd_pk_x1; hd_pk_x1 = y_clip;
+  hd_pk_y2 = hd_pk_y1; hd_pk_y1 = y_pk;
+
+  // 4. Bright: Peaking @ 1000Hz
+  y_sh = hd_sh_a0 * y_pk + hd_sh_a1 * hd_sh_x1 + hd_sh_a2 * hd_sh_x2
+         - hd_sh_b1 * hd_sh_y1 - hd_sh_b2 * hd_sh_y2;
+  hd_sh_x2 = hd_sh_x1; hd_sh_x1 = y_pk;
+  hd_sh_y2 = hd_sh_y1; hd_sh_y1 = y_sh;
+
+  // 5. Post-gain
+  x = y_sh * HD_POST_GAIN;
+  x;
+);
+
+function process_mt2(x) (
+  // 1. HPF @ 35Hz
+  y_hpf = mt2_hpf_a0 * x + mt2_hpf_a1 * mt2_hpf_x1 + mt2_hpf_b1 * mt2_hpf_y1;
+  mt2_hpf_x1 = x; mt2_hpf_y1 = y_hpf;
+
+  // 2. Gyrator 1: Peaking @ 250Hz
+  y_gyr1 = mt2_gyr1_a0 * y_hpf + mt2_gyr1_a1 * mt2_gyr1_x1 + mt2_gyr1_a2 * mt2_gyr1_x2
+           - mt2_gyr1_b1 * mt2_gyr1_y1 - mt2_gyr1_b2 * mt2_gyr1_y2;
+  mt2_gyr1_x2 = mt2_gyr1_x1; mt2_gyr1_x1 = y_hpf;
+  mt2_gyr1_y2 = mt2_gyr1_y1; mt2_gyr1_y1 = y_gyr1;
+
+  // 3. Gyrator 2: Peaking @ 1kHz
+  y_gyr2 = mt2_gyr2_a0 * y_gyr1 + mt2_gyr2_a1 * mt2_gyr2_x1 + mt2_gyr2_a2 * mt2_gyr2_x2
+           - mt2_gyr2_b1 * mt2_gyr2_y1 - mt2_gyr2_b2 * mt2_gyr2_y2;
+  mt2_gyr2_x2 = mt2_gyr2_x1; mt2_gyr2_x1 = y_gyr1;
+  mt2_gyr2_y2 = mt2_gyr2_y1; mt2_gyr2_y1 = y_gyr2;
+
+  // 4. Soft clipping (simetrik)
+  g = y_gyr2 * gain_lin;
+  y_soft = g / sqrt(1 + g * g);
+
+  // 5. Hard clipping (threshold)
+  y_hard = y_soft > MT2_HARD_CLIP ? MT2_HARD_CLIP : (y_soft < -MT2_HARD_CLIP ? -MT2_HARD_CLIP : y_soft);
+
+  // 6. Post-gain
+  x = y_hard * MT2_POST_GAIN;
+  x;
+);
+
+function process_post_eq(x) (
+  // Low: Peaking @ 100Hz
+  y_low = post_eq_low_a0 * x + post_eq_low_a1 * post_eq_low_x1 + post_eq_low_a2 * post_eq_low_x2
+          - post_eq_low_b1 * post_eq_low_y1 - post_eq_low_b2 * post_eq_low_y2;
+  post_eq_low_x2 = post_eq_low_x1; post_eq_low_x1 = x;
+  post_eq_low_y2 = post_eq_low_y1; post_eq_low_y1 = y_low;
+
+  // Mid: Peaking @ slider7
+  y_mid = post_eq_mid_a0 * y_low + post_eq_mid_a1 * post_eq_mid_x1 + post_eq_mid_a2 * post_eq_mid_x2
+          - post_eq_mid_b1 * post_eq_mid_y1 - post_eq_mid_b2 * post_eq_mid_y2;
+  post_eq_mid_x2 = post_eq_mid_x1; post_eq_mid_x1 = y_low;
+  post_eq_mid_y2 = post_eq_mid_y1; post_eq_mid_y1 = y_mid;
+
+  // High: Peaking @ 5kHz
+  y_high = post_eq_high_a0 * y_mid + post_eq_high_a1 * post_eq_high_x1 + post_eq_high_a2 * post_eq_high_x2
+           - post_eq_high_b1 * post_eq_high_y1 - post_eq_high_b2 * post_eq_high_y2;
+  post_eq_high_x2 = post_eq_high_x1; post_eq_high_x1 = y_mid;
+  post_eq_high_y2 = post_eq_high_y1; post_eq_high_y1 = y_high;
+
+  y_high;
+);
+
 function process_turbo_ii(x) (
   x = soft_clip(x);
 
@@ -547,27 +747,37 @@ function process_channel(x) (
     x = process_ts(x);
   ) : turbo_mode == 4 ? (
     x = process_f33(x);
+  ) : turbo_mode == 5 ? (
+    x = process_hd(x);
+  ) : turbo_mode == 6 ? (
+    x = process_mt2(x);
   ) : (
     x = process_turbo_i(x);
     x = process_post_clip(x);
   );
 
+  x = process_post_eq(x);
   x = process_post(x);
 );
 
 @slider
 
-gain_lin = 1 + (slider1 / 100) ^ 2 * 99;
+gain_lin = 10 ^ (slider1 / 100 * 1.5);
 tone_pos = slider2;
 level_lin = (slider3 / 100) ^ 2 * 1.0;
 turbo_mode = slider4;
 os_mode = slider5;
+post_eq_low_db = slider6;
+post_eq_mid_freq = slider7;
+post_eq_mid_db = slider8;
+post_eq_high_db = slider9;
 
 @sample
 
 sr = srate;
+tone_pos = slider2;
 
-(sr != prev_sr || tone_pos != prev_tone || turbo_mode != prev_turbo) ? (
+(sr != prev_sr || tone_pos != prev_tone || turbo_mode != prev_turbo || slider6 != prev_post_low || slider7 != prev_post_mid_freq || slider8 != prev_post_mid_db || slider9 != prev_post_high) ? (
   calc_hpf80(sr);
   calc_turbo_peaking(sr);
   calc_turbo_cut(sr);
@@ -575,11 +785,18 @@ sr = srate;
   calc_ds1_tone(sr);
   calc_ts_tone(sr);
   calc_f33_tone(sr);
+  calc_hd_tone(sr);
+  calc_mt2_tone(sr);
+  calc_post_eq(sr);
   calc_aa_lpf(sr);
   calc_tone_stack(sr, tone_pos);
   prev_sr = sr;
   prev_tone = tone_pos;
   prev_turbo = turbo_mode;
+  prev_post_low = slider6;
+  prev_post_mid_freq = slider7;
+  prev_post_mid_db = slider8;
+  prev_post_high = slider9;
 );
 
 dc_y = dc_in_y1; dc_x = dc_in_x1;
@@ -598,9 +815,25 @@ ts_shelf_x1 = ts_shelf_x1_L; ts_shelf_x2 = ts_shelf_x2_L;
 ts_shelf_y1 = ts_shelf_y1_L; ts_shelf_y2 = ts_shelf_y2_L;
 ts_c4_x1 = ts_c4_x1_L; ts_c4_y1 = ts_c4_y1_L;
 ts_lp_x1 = ts_lp_x1_L; ts_lp_y1 = ts_lp_y1_L;
-f33_hpf_x1 = f33_hpf_x1_L; f33_hpf_y1 = f33_hpf_y1_L;
-f33_pk_x1 = f33_pk_x1_L; f33_pk_x2 = f33_pk_x2_L;
-f33_pk_y1 = f33_pk_y1_L; f33_pk_y2 = f33_pk_y2_L;
+  f33_hpf_x1 = f33_hpf_x1_L; f33_hpf_y1 = f33_hpf_y1_L;
+  f33_pk_x1 = f33_pk_x1_L; f33_pk_x2 = f33_pk_x2_L;
+  f33_pk_y1 = f33_pk_y1_L; f33_pk_y2 = f33_pk_y2_L;
+  hd_hpf_x1 = hd_hpf_x1_L; hd_hpf_y1 = hd_hpf_y1_L;
+  hd_pk_x1 = hd_pk_x1_L; hd_pk_x2 = hd_pk_x2_L;
+  hd_pk_y1 = hd_pk_y1_L; hd_pk_y2 = hd_pk_y2_L;
+  hd_sh_x1 = hd_sh_x1_L; hd_sh_x2 = hd_sh_x2_L;
+  hd_sh_y1 = hd_sh_y1_L; hd_sh_y2 = hd_sh_y2_L;
+  mt2_hpf_x1 = mt2_hpf_x1_L; mt2_hpf_y1 = mt2_hpf_y1_L;
+  mt2_gyr1_x1 = mt2_gyr1_x1_L; mt2_gyr1_x2 = mt2_gyr1_x2_L;
+  mt2_gyr1_y1 = mt2_gyr1_y1_L; mt2_gyr1_y2 = mt2_gyr1_y2_L;
+  mt2_gyr2_x1 = mt2_gyr2_x1_L; mt2_gyr2_x2 = mt2_gyr2_x2_L;
+  mt2_gyr2_y1 = mt2_gyr2_y1_L; mt2_gyr2_y2 = mt2_gyr2_y2_L;
+  post_eq_low_x1 = post_eq_low_x1_L; post_eq_low_x2 = post_eq_low_x2_L;
+  post_eq_low_y1 = post_eq_low_y1_L; post_eq_low_y2 = post_eq_low_y2_L;
+  post_eq_mid_x1 = post_eq_mid_x1_L; post_eq_mid_x2 = post_eq_mid_x2_L;
+  post_eq_mid_y1 = post_eq_mid_y1_L; post_eq_mid_y2 = post_eq_mid_y2_L;
+  post_eq_high_x1 = post_eq_high_x1_L; post_eq_high_x2 = post_eq_high_x2_L;
+  post_eq_high_y1 = post_eq_high_y1_L; post_eq_high_y2 = post_eq_high_y2_L;
 aa_x1 = aa_x1_L; aa_x2 = aa_x2_L;
 aa_y1 = aa_y1_L; aa_y2 = aa_y2_L;
 ts1_x1 = ts1_x1_L; ts1_x2 = ts1_x2_L;
@@ -627,9 +860,25 @@ ts_shelf_x1_L = ts_shelf_x1; ts_shelf_x2_L = ts_shelf_x2;
 ts_shelf_y1_L = ts_shelf_y1; ts_shelf_y2_L = ts_shelf_y2;
 ts_c4_x1_L = ts_c4_x1; ts_c4_y1_L = ts_c4_y1;
 ts_lp_x1_L = ts_lp_x1; ts_lp_y1_L = ts_lp_y1;
-f33_hpf_x1_L = f33_hpf_x1; f33_hpf_y1_L = f33_hpf_y1;
-f33_pk_x1_L = f33_pk_x1; f33_pk_x2_L = f33_pk_x2;
-f33_pk_y1_L = f33_pk_y1; f33_pk_y2_L = f33_pk_y2;
+  f33_hpf_x1_L = f33_hpf_x1; f33_hpf_y1_L = f33_hpf_y1;
+  f33_pk_x1_L = f33_pk_x1; f33_pk_x2_L = f33_pk_x2;
+  f33_pk_y1_L = f33_pk_y1; f33_pk_y2_L = f33_pk_y2;
+  hd_hpf_x1_L = hd_hpf_x1; hd_hpf_y1_L = hd_hpf_y1;
+  hd_pk_x1_L = hd_pk_x1; hd_pk_x2_L = hd_pk_x2;
+  hd_pk_y1_L = hd_pk_y1; hd_pk_y2_L = hd_pk_y2;
+  hd_sh_x1_L = hd_sh_x1; hd_sh_x2_L = hd_sh_x2;
+  hd_sh_y1_L = hd_sh_y1; hd_sh_y2_L = hd_sh_y2;
+  mt2_hpf_x1_L = mt2_hpf_x1; mt2_hpf_y1_L = mt2_hpf_y1;
+  mt2_gyr1_x1_L = mt2_gyr1_x1; mt2_gyr1_x2_L = mt2_gyr1_x2;
+  mt2_gyr1_y1_L = mt2_gyr1_y1; mt2_gyr1_y2_L = mt2_gyr1_y2;
+  mt2_gyr2_x1_L = mt2_gyr2_x1; mt2_gyr2_x2_L = mt2_gyr2_x2;
+  mt2_gyr2_y1_L = mt2_gyr2_y1; mt2_gyr2_y2_L = mt2_gyr2_y2;
+  post_eq_low_x1_L = post_eq_low_x1; post_eq_low_x2_L = post_eq_low_x2;
+  post_eq_low_y1_L = post_eq_low_y1; post_eq_low_y2_L = post_eq_low_y2;
+  post_eq_mid_x1_L = post_eq_mid_x1; post_eq_mid_x2_L = post_eq_mid_x2;
+  post_eq_mid_y1_L = post_eq_mid_y1; post_eq_mid_y2_L = post_eq_mid_y2;
+  post_eq_high_x1_L = post_eq_high_x1; post_eq_high_x2_L = post_eq_high_x2;
+  post_eq_high_y1_L = post_eq_high_y1; post_eq_high_y2_L = post_eq_high_y2;
 aa_x1_L = aa_x1; aa_x2_L = aa_x2;
 aa_y1_L = aa_y1; aa_y2_L = aa_y2;
 ts1_x1_L = ts1_x1; ts1_x2_L = ts1_x2;
@@ -638,132 +887,42 @@ ts2_x1_L = ts2_x1; ts2_x2_L = ts2_x2;
 ts2_y1_L = ts2_y1; ts2_y2_L = ts2_y2;
 dc_out_y1 = dc_out_y; dc_out_x1 = dc_out_x;
 
-gfx_in_buf[gfx_idx] = spl0;
-gfx_out_buf[gfx_idx] = spl0;
-gfx_idx = (gfx_idx + 1) % GFX_BUF_SIZE;
-
-dc_y = dc_in_y2; dc_x = dc_in_x2;
-hpf_x1 = hpf_x1_R; hpf_y1 = hpf_y1_R;
-dc_mid_y = dc_mid_y2; dc_mid_x = dc_mid_x2;
-turbo_x1 = turbo_x1_R; turbo_x2 = turbo_x2_R;
-turbo_y1 = turbo_y1_R; turbo_y2 = turbo_y2_R;
-notch_x1 = notch_x1_R; notch_x2 = notch_x2_R;
-notch_y1 = notch_y1_R; notch_y2 = notch_y2_R;
-turbo_ls_x1 = turbo_ls_x1_R; turbo_ls_x2 = turbo_ls_x2_R;
-turbo_ls_y1 = turbo_ls_y1_R; turbo_ls_y2 = turbo_ls_y2_R;
-ds1_lpf_x1 = ds1_lpf_x1_R; ds1_lpf_y1 = ds1_lpf_y1_R;
-ds1_hpf_x1 = ds1_hpf_x1_R; ds1_hpf_y1 = ds1_hpf_y1_R;
-ts_hpf_x1 = ts_hpf_x1_R; ts_hpf_y1 = ts_hpf_y1_R;
-ts_shelf_x1 = ts_shelf_x1_R; ts_shelf_x2 = ts_shelf_x2_R;
-ts_shelf_y1 = ts_shelf_y1_R; ts_shelf_y2 = ts_shelf_y2_R;
-ts_c4_x1 = ts_c4_x1_R; ts_c4_y1 = ts_c4_y1_R;
-ts_lp_x1 = ts_lp_x1_R; ts_lp_y1 = ts_lp_y1_R;
-f33_hpf_x1 = f33_hpf_x1_R; f33_hpf_y1 = f33_hpf_y1_R;
-f33_pk_x1 = f33_pk_x1_R; f33_pk_x2 = f33_pk_x2_R;
-f33_pk_y1 = f33_pk_y1_R; f33_pk_y2 = f33_pk_y2_R;
-aa_x1 = aa_x1_R; aa_x2 = aa_x2_R;
-aa_y1 = aa_y1_R; aa_y2 = aa_y2_R;
-ts1_x1 = ts1_x1_R; ts1_x2 = ts1_x2_R;
-ts1_y1 = ts1_y1_R; ts1_y2 = ts1_y2_R;
-ts2_x1 = ts2_x1_R; ts2_x2 = ts2_x2_R;
-ts2_y1 = ts2_y1_R; ts2_y2 = ts2_y2_R;
-dc_out_y = dc_out_y2; dc_out_x = dc_out_x2;
-
-spl1 = process_channel(spl1);
-
-dc_in_y2 = dc_y; dc_in_x2 = dc_x;
-hpf_x1_R = hpf_x1; hpf_y1_R = hpf_y1;
-dc_mid_y2 = dc_mid_y; dc_mid_x2 = dc_mid_x;
-turbo_x1_R = turbo_x1; turbo_x2_R = turbo_x2;
-turbo_y1_R = turbo_y1; turbo_y2_R = turbo_y2;
-notch_x1_R = notch_x1; notch_x2_R = notch_x2;
-notch_y1_R = notch_y1; notch_y2_R = notch_y2;
-turbo_ls_x1_R = turbo_ls_x1; turbo_ls_x2_R = turbo_ls_x2;
-turbo_ls_y1_R = turbo_ls_y1; turbo_ls_y2_R = turbo_ls_y2;
-ds1_lpf_x1_R = ds1_lpf_x1; ds1_lpf_y1_R = ds1_lpf_y1;
-ds1_hpf_x1_R = ds1_hpf_x1; ds1_hpf_y1_R = ds1_hpf_y1;
-ts_hpf_x1_R = ts_hpf_x1; ts_hpf_y1_R = ts_hpf_y1;
-ts_shelf_x1_R = ts_shelf_x1; ts_shelf_x2_R = ts_shelf_x2;
-ts_shelf_y1_R = ts_shelf_y1; ts_shelf_y2_R = ts_shelf_y2;
-ts_c4_x1_R = ts_c4_x1; ts_c4_y1_R = ts_c4_y1;
-ts_lp_x1_R = ts_lp_x1; ts_lp_y1_R = ts_lp_y1;
-f33_hpf_x1_R = f33_hpf_x1; f33_hpf_y1_R = f33_hpf_y1;
-f33_pk_x1_R = f33_pk_x1; f33_pk_x2_R = f33_pk_x2;
-f33_pk_y1_R = f33_pk_y1; f33_pk_y2_R = f33_pk_y2;
-aa_x1_R = aa_x1; aa_x2_R = aa_x2;
-aa_y1_R = aa_y1; aa_y2_R = aa_y2;
-ts1_x1_R = ts1_x1; ts1_x2_R = ts1_x2;
-ts1_y1_R = ts1_y1; ts1_y2_R = ts1_y2;
-ts2_x1_R = ts2_x1; ts2_x2_R = ts2_x2;
-ts2_y1_R = ts2_y1; ts2_y2_R = ts2_y2;
-dc_out_y2 = dc_out_y; dc_out_x2 = dc_out_x;
-
-@gfx 400 250
-
-gfx_set(0.1, 0.1, 0.12);
-gfx_rect(0, 0, 400, 250);
+@gfx 400 350
 
 gfx_set(0.9, 0.9, 0.9);
 gfx_x = 10; gfx_y = 5;
 gfx_drawstr("Lozengrad Pedal");
 
-gfx_set(0.15, 0.15, 0.2);
-gfx_rect(5, 22, 390, 105);
-
-gfx_set(0.3, 0.5, 1.0);
-i = 0;
-loop(GFX_BUF_SIZE - 1,
-  x1 = 5 + i * 385 / GFX_BUF_SIZE;
-  x2 = 5 + (i + 1) * 385 / GFX_BUF_SIZE;
-  y1 = 65 - gfx_in_buf[(gfx_idx + i) % GFX_BUF_SIZE] * 35;
-  y2 = 65 - gfx_in_buf[(gfx_idx + i + 1) % GFX_BUF_SIZE] * 35;
-  gfx_line(x1, y1, x2, y2);
-  i += 1;
+gfx_set(0.6, 0.8, 0.6);
+gfx_x = 180; gfx_y = 5;
+os_mode == 0 ? gfx_drawstr("OS: Off") : (
+  os_mode == 1 ? gfx_drawstr("OS: 4x") : gfx_drawstr("OS: 8x")
 );
-
-gfx_set(1.0, 0.6, 0.1);
-i = 0;
-loop(GFX_BUF_SIZE - 1,
-  x1 = 5 + i * 385 / GFX_BUF_SIZE;
-  x2 = 5 + (i + 1) * 385 / GFX_BUF_SIZE;
-  y1 = 65 - gfx_out_buf[(gfx_idx + i) % GFX_BUF_SIZE] * 35;
-  y2 = 65 - gfx_out_buf[(gfx_idx + i + 1) % GFX_BUF_SIZE] * 35;
-  gfx_line(x1, y1, x2, y2);
-  i += 1;
-);
-
-gfx_set(0.3, 0.5, 1.0);
-gfx_x = 10; gfx_y = 108;
-gfx_drawstr("IN");
-gfx_set(1.0, 0.6, 0.1);
-gfx_x = 40; gfx_y = 108;
-gfx_drawstr("OUT");
 
 gfx_set(0.9, 0.3, 0.3);
 gfx_x = 300; gfx_y = 5;
 turbo_mode == 0 ? gfx_drawstr("TURBO I") : (
   turbo_mode == 1 ? gfx_drawstr("TURBO II") : (
     turbo_mode == 2 ? gfx_drawstr("DS-1") : (
-      turbo_mode == 3 ? gfx_drawstr("GREEN TS") : gfx_drawstr("FORTIN 33")
+      turbo_mode == 3 ? gfx_drawstr("GREEN TS") : (
+        turbo_mode == 4 ? gfx_drawstr("FORTIN 33") : (
+          turbo_mode == 5 ? gfx_drawstr("HORIZON") : gfx_drawstr("MT-2")
+        )
+      )
     )
   )
 );
 
-gfx_set(0.6, 0.8, 0.6);
-gfx_x = 300; gfx_y = 108;
-os_mode == 0 ? gfx_drawstr("OS: Off") : (
-  os_mode == 1 ? gfx_drawstr("OS: 4x") : gfx_drawstr("OS: 8x")
-);
-
+// Tone Response
 gfx_set(0.15, 0.15, 0.2);
-gfx_rect(5, 125, 390, 240);
+gfx_rect(5, 20, 390, 130);
 
 gfx_set(0.7, 0.7, 0.7);
-gfx_x = 10; gfx_y = 126;
+gfx_x = 10; gfx_y = 31;
 gfx_drawstr("Tone Response");
 
 gfx_set(0.3, 0.3, 0.3);
-gfx_line(5, 180, 395, 180);
+gfx_line(5, 85, 395, 85);
 
 gfx_set(0.2, 1.0, 0.4);
 t = (tone_pos + 1) * 0.5;
@@ -788,19 +947,23 @@ loop(num_pts,
     g_hpf = f / 1060 / sqrt(1 + (f / 1060) ^ 2);
     total_g = g_lpf * (1 - t) + g_hpf * t;
   ) : turbo_mode == 3 ? (
-    // Green TS: HPF 720 + High-Shelf 1500 + LP 5k
+    // Green TS: HPF 720 + High-Shelf 1500 + C4 LPF 25k + LP 5k
     r_hpf = f / 720;
     g_hpf_ts = r_hpf / sqrt(1 + r_hpf * r_hpf);
 
-    shelf_db_ts = tone_pos * 10;
-    A_ts = 10 ^ (shelf_db_ts / 20);
-    r_shelf = f / 1500;
-    g_shelf = 1 + (A_ts - 1) * r_shelf * r_shelf / (1 + r_shelf * r_shelf);
+    pk_db_ts = tone_pos * 10;
+    A_ts = 10 ^ (pk_db_ts / 20);
+    r_pk_ts = f / 1500;
+    denom_pk_ts = 1 + (r_pk_ts - 1/r_pk_ts) * (r_pk_ts - 1/r_pk_ts);
+    g_pk_ts = 1 + (A_ts - 1) / denom_pk_ts;
+
+    r_c4 = f / 25000;
+    g_c4 = 1 / sqrt(1 + r_c4 * r_c4);
 
     r_lp = f / 5000;
     g_lp = 1 / sqrt(1 + r_lp * r_lp);
 
-    total_g = g_hpf_ts * g_shelf * g_lp;
+    total_g = g_hpf_ts * g_pk_ts * g_c4 * g_lp;
   ) : turbo_mode == 4 ? (
     // Fortin 33: 1st order HPF 300Hz + Peaking EQ 1000Hz Q=1.0
     r_hpf33 = f / 300;
@@ -813,6 +976,23 @@ loop(num_pts,
     g_pk33 = 1 + (A33 - 1) / denom33;
 
     total_g = g_hpf33 * g_pk33;
+  ) : turbo_mode == 5 ? (
+    // Horizon: HPF @ 400Hz + Peaking @ 800Hz + High-Shelf @ 2500Hz
+    r_hpfhd = f / 400;
+    g_hpfhd = r_hpfhd / sqrt(1 + r_hpfhd * r_hpfhd);
+
+    A_pkhd = 10 ^ (4 / 20);
+    r_pkhd = f / 800;
+    denom_pkhd = 1 + (r_pkhd - 1/r_pkhd) * (r_pkhd - 1/r_pkhd) * 1.5 * 1.5;
+    g_pkhd = 1 + (A_pkhd - 1) / denom_pkhd;
+
+    pk_db_hd = slider2 * 10;
+    A_hd = 10 ^ (pk_db_hd / 20);
+    r_pk_hd = f / 1000;
+    denom_pk_hd = 1 + (r_pk_hd - 1/r_pk_hd) * (r_pk_hd - 1/r_pk_hd);
+    g_pk_hd = 1 + (A_hd - 1) / denom_pk_hd;
+
+    total_g = g_hpfhd * g_pkhd * g_pk_hd;
   ) : (
     A1 = 10 ^ (gain1_db / 40);
     A2 = 10 ^ (gain2_db / 40);
@@ -827,8 +1007,8 @@ loop(num_pts,
   total_db = 20 * log10(max(total_g, 0.001));
 
   px = 5 + i * 390 / num_pts;
-  py = 180 - total_db * 4;
-  py = min(max(py, 130), 238);
+  py = 85 - total_db * 3;
+  py = min(max(py, 30), 140);
 
   prev_px >= 0 ? gfx_line(prev_px, prev_py, px, py);
 
@@ -838,13 +1018,70 @@ loop(num_pts,
 );
 
 gfx_set(0.5, 0.5, 0.5);
-gfx_x = 5; gfx_y = 240;
+gfx_x = 5; gfx_y = 145;
 gfx_drawstr("20");
-gfx_x = 127; gfx_y = 240;
+gfx_x = 127; gfx_y = 145;
 gfx_drawstr("200");
-gfx_x = 212; gfx_y = 240;
+gfx_x = 212; gfx_y = 145;
 gfx_drawstr("1k");
-gfx_x = 250; gfx_y = 240;
+gfx_x = 250; gfx_y = 145;
 gfx_drawstr("2k");
-gfx_x = 370; gfx_y = 240;
+gfx_x = 370; gfx_y = 145;
+gfx_drawstr("20k");
+
+// Post-EQ
+gfx_set(0.15, 0.15, 0.2);
+gfx_rect(5, 160, 390, 130);
+
+gfx_set(0.7, 0.7, 0.7);
+gfx_x = 10; gfx_y = 171;
+gfx_drawstr("Post-EQ");
+
+gfx_set(0.3, 0.3, 0.3);
+gfx_line(5, 225, 395, 225);
+
+gfx_set(0.9, 0.6, 0.2);
+prev_px = -1; prev_py = -1;
+num_pts = 100;
+i = 0;
+while(i < num_pts) (
+  f = 20 * exp(log(1000) * i / num_pts);
+
+  A_low = 10 ^ (slider6 / 20);
+  r_low = f / 100;
+  denom_low = 1 + (r_low - 1/r_low) * (r_low - 1/r_low) * 0.7 * 0.7;
+  g_low = 1 + (A_low - 1) / denom_low;
+
+  A_mid = 10 ^ (slider8 / 20);
+  r_mid = f / slider7;
+  denom_mid = 1 + (r_mid - 1/r_mid) * (r_mid - 1/r_mid);
+  g_mid = 1 + (A_mid - 1) / denom_mid;
+
+  A_high = 10 ^ (slider9 / 20);
+  r_high = f / 5000;
+  denom_high = 1 + (r_high - 1/r_high) * (r_high - 1/r_high) * 0.7 * 0.7;
+  g_high = 1 + (A_high - 1) / denom_high;
+
+  total_g = g_low * g_mid * g_high;
+  total_db = 20 * log10(max(total_g, 0.001));
+
+  px = 5 + i * 390 / num_pts;
+  py = 225 - total_db * 3;
+  py = min(max(py, 170), 265);
+
+  prev_px >= 0 ? gfx_line(prev_px, prev_py, px, py);
+  prev_px = px; prev_py = py;
+  i += 1;
+);
+
+gfx_set(0.5, 0.5, 0.5);
+gfx_x = 5; gfx_y = 285;
+gfx_drawstr("20");
+gfx_x = 127; gfx_y = 285;
+gfx_drawstr("200");
+gfx_x = 212; gfx_y = 285;
+gfx_drawstr("1k");
+gfx_x = 250; gfx_y = 285;
+gfx_drawstr("2k");
+gfx_x = 370; gfx_y = 285;
 gfx_drawstr("20k");
