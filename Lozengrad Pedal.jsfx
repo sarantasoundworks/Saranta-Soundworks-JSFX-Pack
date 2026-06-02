@@ -16,7 +16,7 @@ desc:Lozengrad Pedal
 slider1:5<0,100,1>Gain
 slider2:0<-1,1,0.01>Tone
 slider3:50<0,100,1>Level
-slider4:0<0,3,1{Turbo I,Turbo II,DS-1,Green TS}>Pedal Mode
+slider4:0<0,4,1{Turbo I,Turbo II,DS-1,Green TS,Fortin 33}>Pedal Mode
 slider5:1<0,2,1{Off,4x,8x}>Oversampling
 
 @init
@@ -93,6 +93,15 @@ ts_lp_x1_L = 0; ts_lp_y1_L = 0;
 ts_lp_x1_R = 0; ts_lp_y1_R = 0;
 ts_lp_a0 = 0; ts_lp_a1 = 0; ts_lp_b1 = 0;
 
+// Fortin 33 state (1st order HPF + Peaking EQ)
+f33_hpf_x1_L = 0; f33_hpf_y1_L = 0;
+f33_hpf_x1_R = 0; f33_hpf_y1_R = 0;
+f33_hpf_a0 = 0; f33_hpf_a1 = 0; f33_hpf_b1 = 0;
+
+f33_pk_x1_L = 0; f33_pk_x2_L = 0; f33_pk_y1_L = 0; f33_pk_y2_L = 0;
+f33_pk_x1_R = 0; f33_pk_x2_R = 0; f33_pk_y1_R = 0; f33_pk_y2_R = 0;
+f33_pk_a0 = 1; f33_pk_a1 = 0; f33_pk_a2 = 0; f33_pk_b1 = 0; f33_pk_b2 = 0;
+
 pk_a0 = 1; pk_a1 = 0; pk_a2 = 0; pk_b1 = 0; pk_b2 = 0;
 
 SOFT_DC_BIAS = 0.02;
@@ -124,6 +133,11 @@ TS_HPF_FREQ = 720;
 TS_SHELF_FREQ = 1500;
 TS_C4_FREQ = 25000;
 TS_LP_FREQ = 5000;
+
+// Fortin 33 parametreleri
+F33_HPF_FREQ = 300;
+F33_PK_FREQ = 1000;
+F33_PK_Q = 1.0;
 
 gfx_idx = 0;
 GFX_BUF_SIZE = 400;
@@ -321,6 +335,21 @@ function calc_ts_tone(sr) (
   ts_lp_b1 = (k2 - wc_lp) / (k2 + wc_lp);
 );
 
+function calc_f33_tone(sr) (
+  // 1st order HPF @ 300Hz (bas kesimi)
+  wc = 2 * $pi * F33_HPF_FREQ;
+  k = 2 * sr;
+  f33_hpf_a0 = k / (k + wc);
+  f33_hpf_a1 = -f33_hpf_a0;
+  f33_hpf_b1 = (k - wc) / (k + wc);
+
+  // Peaking EQ 1000Hz, Q=1.0, tone_pos -1..+1 -> -10..+10 dB
+  pk_db = tone_pos * 10;
+  calc_peaking(sr, F33_PK_FREQ, F33_PK_Q, pk_db);
+  f33_pk_a0 = pk_a0; f33_pk_a1 = pk_a1; f33_pk_a2 = pk_a2;
+  f33_pk_b1 = pk_b1; f33_pk_b2 = pk_b2;
+);
+
 function soft_clip(x) (
   s = x + SOFT_DC_BIAS;
   g = s * SOFT_GAIN;
@@ -362,6 +391,9 @@ function process_post(x) (
   dc_out_y = dc_alpha * (dc_out_y + x - dc_out_x);
   dc_out_x = x;
   x = dc_out_y;
+
+  // Dijital clipping koruması (0 dBFS limiter)
+  x > 1.0 ? x = 1.0 : (x < -1.0 ? x = -1.0 : x);
   x;
 );
 
@@ -416,6 +448,24 @@ function process_ts(x) (
 
   // Post-gain: clipping + HPF 720 RMS kaybını telafi
   x = x * 20.0;
+  x;
+);
+
+function process_f33(x) (
+  // 1st order HPF @ 300Hz (bas kesimi)
+  y_hpf = f33_hpf_a0 * x + f33_hpf_a1 * f33_hpf_x1 + f33_hpf_b1 * f33_hpf_y1;
+  f33_hpf_x1 = x; f33_hpf_y1 = y_hpf;
+  x = y_hpf;
+
+  // Peaking EQ 1000Hz Q=1.0 (tone slider kontrol)
+  y_pk = f33_pk_a0 * x + f33_pk_a1 * f33_pk_x1 + f33_pk_a2 * f33_pk_x2
+         - f33_pk_b1 * f33_pk_y1 - f33_pk_b2 * f33_pk_y2;
+  f33_pk_x2 = f33_pk_x1; f33_pk_x1 = x;
+  f33_pk_y2 = f33_pk_y1; f33_pk_y1 = y_pk;
+  x = y_pk;
+
+  // Post-gain: HPF 300 RMS kaybını telafi
+  x = x * 5.0;
   x;
 );
 
@@ -495,6 +545,8 @@ function process_channel(x) (
     x = process_post_clip(x);
   ) : turbo_mode == 3 ? (
     x = process_ts(x);
+  ) : turbo_mode == 4 ? (
+    x = process_f33(x);
   ) : (
     x = process_turbo_i(x);
     x = process_post_clip(x);
@@ -522,6 +574,7 @@ sr = srate;
   calc_turbo_lowshelf(sr);
   calc_ds1_tone(sr);
   calc_ts_tone(sr);
+  calc_f33_tone(sr);
   calc_aa_lpf(sr);
   calc_tone_stack(sr, tone_pos);
   prev_sr = sr;
@@ -545,6 +598,9 @@ ts_shelf_x1 = ts_shelf_x1_L; ts_shelf_x2 = ts_shelf_x2_L;
 ts_shelf_y1 = ts_shelf_y1_L; ts_shelf_y2 = ts_shelf_y2_L;
 ts_c4_x1 = ts_c4_x1_L; ts_c4_y1 = ts_c4_y1_L;
 ts_lp_x1 = ts_lp_x1_L; ts_lp_y1 = ts_lp_y1_L;
+f33_hpf_x1 = f33_hpf_x1_L; f33_hpf_y1 = f33_hpf_y1_L;
+f33_pk_x1 = f33_pk_x1_L; f33_pk_x2 = f33_pk_x2_L;
+f33_pk_y1 = f33_pk_y1_L; f33_pk_y2 = f33_pk_y2_L;
 aa_x1 = aa_x1_L; aa_x2 = aa_x2_L;
 aa_y1 = aa_y1_L; aa_y2 = aa_y2_L;
 ts1_x1 = ts1_x1_L; ts1_x2 = ts1_x2_L;
@@ -571,6 +627,9 @@ ts_shelf_x1_L = ts_shelf_x1; ts_shelf_x2_L = ts_shelf_x2;
 ts_shelf_y1_L = ts_shelf_y1; ts_shelf_y2_L = ts_shelf_y2;
 ts_c4_x1_L = ts_c4_x1; ts_c4_y1_L = ts_c4_y1;
 ts_lp_x1_L = ts_lp_x1; ts_lp_y1_L = ts_lp_y1;
+f33_hpf_x1_L = f33_hpf_x1; f33_hpf_y1_L = f33_hpf_y1;
+f33_pk_x1_L = f33_pk_x1; f33_pk_x2_L = f33_pk_x2;
+f33_pk_y1_L = f33_pk_y1; f33_pk_y2_L = f33_pk_y2;
 aa_x1_L = aa_x1; aa_x2_L = aa_x2;
 aa_y1_L = aa_y1; aa_y2_L = aa_y2;
 ts1_x1_L = ts1_x1; ts1_x2_L = ts1_x2;
@@ -599,6 +658,9 @@ ts_shelf_x1 = ts_shelf_x1_R; ts_shelf_x2 = ts_shelf_x2_R;
 ts_shelf_y1 = ts_shelf_y1_R; ts_shelf_y2 = ts_shelf_y2_R;
 ts_c4_x1 = ts_c4_x1_R; ts_c4_y1 = ts_c4_y1_R;
 ts_lp_x1 = ts_lp_x1_R; ts_lp_y1 = ts_lp_y1_R;
+f33_hpf_x1 = f33_hpf_x1_R; f33_hpf_y1 = f33_hpf_y1_R;
+f33_pk_x1 = f33_pk_x1_R; f33_pk_x2 = f33_pk_x2_R;
+f33_pk_y1 = f33_pk_y1_R; f33_pk_y2 = f33_pk_y2_R;
 aa_x1 = aa_x1_R; aa_x2 = aa_x2_R;
 aa_y1 = aa_y1_R; aa_y2 = aa_y2_R;
 ts1_x1 = ts1_x1_R; ts1_x2 = ts1_x2_R;
@@ -625,6 +687,9 @@ ts_shelf_x1_R = ts_shelf_x1; ts_shelf_x2_R = ts_shelf_x2;
 ts_shelf_y1_R = ts_shelf_y1; ts_shelf_y2_R = ts_shelf_y2;
 ts_c4_x1_R = ts_c4_x1; ts_c4_y1_R = ts_c4_y1;
 ts_lp_x1_R = ts_lp_x1; ts_lp_y1_R = ts_lp_y1;
+f33_hpf_x1_R = f33_hpf_x1; f33_hpf_y1_R = f33_hpf_y1;
+f33_pk_x1_R = f33_pk_x1; f33_pk_x2_R = f33_pk_x2;
+f33_pk_y1_R = f33_pk_y1; f33_pk_y2_R = f33_pk_y2;
 aa_x1_R = aa_x1; aa_x2_R = aa_x2;
 aa_y1_R = aa_y1; aa_y2_R = aa_y2;
 ts1_x1_R = ts1_x1; ts1_x2_R = ts1_x2;
@@ -678,7 +743,9 @@ gfx_set(0.9, 0.3, 0.3);
 gfx_x = 300; gfx_y = 5;
 turbo_mode == 0 ? gfx_drawstr("TURBO I") : (
   turbo_mode == 1 ? gfx_drawstr("TURBO II") : (
-    turbo_mode == 2 ? gfx_drawstr("DS-1") : gfx_drawstr("GREEN TS")
+    turbo_mode == 2 ? gfx_drawstr("DS-1") : (
+      turbo_mode == 3 ? gfx_drawstr("GREEN TS") : gfx_drawstr("FORTIN 33")
+    )
   )
 );
 
@@ -734,6 +801,18 @@ loop(num_pts,
     g_lp = 1 / sqrt(1 + r_lp * r_lp);
 
     total_g = g_hpf_ts * g_shelf * g_lp;
+  ) : turbo_mode == 4 ? (
+    // Fortin 33: 1st order HPF 300Hz + Peaking EQ 1000Hz Q=1.0
+    r_hpf33 = f / 300;
+    g_hpf33 = r_hpf33 / sqrt(1 + r_hpf33 * r_hpf33);
+
+    pk_db33 = tone_pos * 10;
+    A33 = 10 ^ (pk_db33 / 20);
+    r33 = f / 1000;
+    denom33 = 1 + (r33 - 1/r33) * (r33 - 1/r33);
+    g_pk33 = 1 + (A33 - 1) / denom33;
+
+    total_g = g_hpf33 * g_pk33;
   ) : (
     A1 = 10 ^ (gain1_db / 40);
     A2 = 10 ^ (gain2_db / 40);
@@ -761,9 +840,11 @@ loop(num_pts,
 gfx_set(0.5, 0.5, 0.5);
 gfx_x = 5; gfx_y = 240;
 gfx_drawstr("20");
-gfx_x = 100; gfx_y = 240;
+gfx_x = 127; gfx_y = 240;
 gfx_drawstr("200");
-gfx_x = 200; gfx_y = 240;
+gfx_x = 212; gfx_y = 240;
+gfx_drawstr("1k");
+gfx_x = 250; gfx_y = 240;
 gfx_drawstr("2k");
-gfx_x = 330; gfx_y = 240;
+gfx_x = 370; gfx_y = 240;
 gfx_drawstr("20k");
