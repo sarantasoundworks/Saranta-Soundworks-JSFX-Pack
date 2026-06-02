@@ -14,6 +14,7 @@ Download the latest version for free at [sarantasoundworks.com](https://sarantas
 | **Lozengrad Feeltre** | Multi-Mode Filter | LPF, HPF, BPF, APF, Tilt EQ, Low Shelf, High Shelf, Tilt Shelf with gain control and spectrum analyzer |
 | **Lozengrad Kompresor** | Compressor/Limiter | VCA-style compressor with threshold, ratio, attack/release, knee (hard/medium/soft), detector thrust, feedforward/feedback modes, headroom control, make-up gain, parallel mix, GR meter |
 | **Lozengrad MB Saturasyon** | Multiband Saturation | 3-band (Low/Mid/High) saturation with Linkwitz-Riley crossover, 4 saturation modes (Soft Clip/Tube/Tape/Hard Clip), auto gain per band, oversampling (2x/4x), solo listen, dry/wet mix |
+| **Lozengrad Pedal** | Multi-Pedal Distortion | 7 pedal modes (Vintage Clip, Turbo Clip, Orange Drive, Green Drive, Slam Boost, Modern Drive, Grind Distortion), per-pedal circuit-modeled tone shaping, gain/tone/level controls, 3-band Post-EQ (Low/Mid/High), oversampling (4x/8x), integrated stereo processing |
 | **Lozengrad RetroSpec** | FFT Visualizer | Retro-styled spectrum analyzer with 10 visual styles (Terminal, Blocks, Matrix, Retro, Mask:Smile, Mask:Crescent, Mask:Skull, Radar, Hanzi, Wormhole, HexDump) and 13 color themes |
 | **Lozengrad Spyke** | Transient Shaper | Attack and Sustain controls with output level. Enhances or softens transients independently |
 
