@@ -16,7 +16,7 @@ desc:Lozengrad Pedal
 slider1:5<0,100,1>Gain
 slider2:0<-1,1,0.01>Tone
 slider3:50<0,100,1>Level
-slider4:0<0,1,1{Turbo I,Turbo II}>Turbo Mode
+slider4:0<0,2,1{Turbo I,Turbo II,DS-1}>Pedal Mode
 slider5:1<0,2,1{Off,4x,8x}>Oversampling
 
 @init
@@ -67,6 +67,15 @@ ts2_x1_L = 0; ts2_x2_L = 0; ts2_y1_L = 0; ts2_y2_L = 0;
 ts2_x1_R = 0; ts2_x2_R = 0; ts2_y1_R = 0; ts2_y2_R = 0;
 ts2_a0 = 1; ts2_a1 = 0; ts2_a2 = 0; ts2_b1 = 0; ts2_b2 = 0;
 
+// DS-1 tone stack state
+ds1_lpf_x1_L = 0; ds1_lpf_y1_L = 0;
+ds1_lpf_x1_R = 0; ds1_lpf_y1_R = 0;
+ds1_lpf_a0 = 0; ds1_lpf_a1 = 0; ds1_lpf_b1 = 0;
+
+ds1_hpf_x1_L = 0; ds1_hpf_y1_L = 0;
+ds1_hpf_x1_R = 0; ds1_hpf_y1_R = 0;
+ds1_hpf_a0 = 0; ds1_hpf_a1 = 0; ds1_hpf_b1 = 0;
+
 pk_a0 = 1; pk_a1 = 0; pk_a2 = 0; pk_b1 = 0; pk_b2 = 0;
 
 SOFT_DC_BIAS = 0.02;
@@ -83,6 +92,11 @@ TURBO_LOW_SHELF_FREQ = 200;
 TURBO_LOW_SHELF_Q = 0.7;
 TURBO_LOW_SHELF_GAIN_DB = -3;
 HARD_CLIP_N = 8;
+
+// DS-1 parametreleri
+DS1_THRESHOLD = 0.7;
+DS1_LPF_FREQ = 720;
+DS1_HPF_FREQ = 1060;
 
 gfx_idx = 0;
 GFX_BUF_SIZE = 400;
@@ -203,6 +217,27 @@ function calc_tone_stack(sr, tone_pos) (
   ts2_b1 = pk_b1; ts2_b2 = pk_b2;
 );
 
+// DS-1 tone stack: LPF + HPF blend (mid-scoop)
+function calc_ds1_tone(sr) (
+  // LPF: 720 Hz, 1st order
+  wc_lpf = 2 * $pi * DS1_LPF_FREQ;
+  k = 2 * sr;
+  ds1_lpf_a0 = wc_lpf / (k + wc_lpf);
+  ds1_lpf_a1 = 0;
+  ds1_lpf_b1 = (k - wc_lpf) / (k + wc_lpf);
+
+  // HPF: 1060 Hz, 1st order
+  wc_hpf = 2 * $pi * DS1_HPF_FREQ;
+  ds1_hpf_a0 = k / (k + wc_hpf);
+  ds1_hpf_a1 = -ds1_hpf_a0;
+  ds1_hpf_b1 = (k - wc_hpf) / (k + wc_hpf);
+);
+
+// DS-1 hard clipping
+function ds1_hard_clip(x) (
+  x > DS1_THRESHOLD ? DS1_THRESHOLD : (x < -DS1_THRESHOLD ? -DS1_THRESHOLD : x);
+);
+
 function soft_clip(x) (
   s = x + SOFT_DC_BIAS;
   g = s * SOFT_GAIN;
@@ -225,7 +260,7 @@ function get_os_factor(os_mode) (
   os_mode == 0 ? 1 : (os_mode == 1 ? 4 : 8);
 );
 
-function process_channel(x) (
+function process_pre(x) (
   x = x * gain_lin;
 
   dc_y = dc_alpha * (dc_y + x - dc_x);
@@ -234,43 +269,81 @@ function process_channel(x) (
 
   y_hpf = hpf_a0 * x + hpf_a1 * hpf_x1 + hpf_b1 * hpf_y1;
   hpf_x1 = x; hpf_y1 = y_hpf;
-  x = y_hpf;
+  x;
+);
 
+function process_post(x) (
+  gain_match = 1 / (1 + (gain_lin - 1) * 0.12);
+  x = x * level_lin * gain_match;
+
+  dc_out_y = dc_alpha * (dc_out_y + x - dc_out_x);
+  dc_out_x = x;
+  x = dc_out_y;
+  x;
+);
+
+function process_ds1(x) (
+  x = soft_clip(x);
+  x = ds1_hard_clip(x);
+
+  y_lpf = ds1_lpf_a0 * x + ds1_lpf_a1 * ds1_lpf_x1 + ds1_lpf_b1 * ds1_lpf_y1;
+  ds1_lpf_x1 = x; ds1_lpf_y1 = y_lpf;
+
+  y_hpf2 = ds1_hpf_a0 * x + ds1_hpf_a1 * ds1_hpf_x1 + ds1_hpf_b1 * ds1_hpf_y1;
+  ds1_hpf_x1 = x; ds1_hpf_y1 = y_hpf2;
+
+  t = (tone_pos + 1) * 0.5;
+  x = (y_lpf * (1 - t) + y_hpf2 * t) * 1.4;
+  x = x * 6.0;
+  x;
+);
+
+function process_turbo_ii(x) (
   x = soft_clip(x);
 
   dc_mid_y = dc_alpha * (dc_mid_y + x - dc_mid_x);
   dc_mid_x = x;
   x = dc_mid_y;
 
-  turbo_mode == 1 ? (
-    x = x * TURBO_GAIN_II;
+  x = x * TURBO_GAIN_II;
 
-    y_bp = turbo_bp_a0 * x + turbo_bp_a1 * turbo_x1 + turbo_bp_a2 * turbo_x2
-           - turbo_bp_b1 * turbo_y1 - turbo_bp_b2 * turbo_y2;
-    turbo_x2 = turbo_x1; turbo_x1 = x;
-    turbo_y2 = turbo_y1; turbo_y1 = y_bp;
-    x = y_bp;
+  y_bp = turbo_bp_a0 * x + turbo_bp_a1 * turbo_x1 + turbo_bp_a2 * turbo_x2
+         - turbo_bp_b1 * turbo_y1 - turbo_bp_b2 * turbo_y2;
+  turbo_x2 = turbo_x1; turbo_x1 = x;
+  turbo_y2 = turbo_y1; turbo_y1 = y_bp;
+  x = y_bp;
 
-    y_cut = notch_a0 * x + notch_a1 * notch_x1 + notch_a2 * notch_x2
-            - notch_b1 * notch_y1 - notch_b2 * notch_y2;
-    notch_x2 = notch_x1; notch_x1 = x;
-    notch_y2 = notch_y1; notch_y1 = y_cut;
-    x = y_cut;
+  y_cut = notch_a0 * x + notch_a1 * notch_x1 + notch_a2 * notch_x2
+          - notch_b1 * notch_y1 - notch_b2 * notch_y2;
+  notch_x2 = notch_x1; notch_x1 = x;
+  notch_y2 = notch_y1; notch_y1 = y_cut;
+  x = y_cut;
 
-    y_ls = turbo_ls_a0 * x + turbo_ls_a1 * turbo_ls_x1 + turbo_ls_a2 * turbo_ls_x2
-           - turbo_ls_b1 * turbo_ls_y1 - turbo_ls_b2 * turbo_ls_y2;
-    turbo_ls_x2 = turbo_ls_x1; turbo_ls_x1 = x;
-    turbo_ls_y2 = turbo_ls_y1; turbo_ls_y1 = y_ls;
-    x = y_ls;
+  y_ls = turbo_ls_a0 * x + turbo_ls_a1 * turbo_ls_x1 + turbo_ls_a2 * turbo_ls_x2
+         - turbo_ls_b1 * turbo_ls_y1 - turbo_ls_b2 * turbo_ls_y2;
+  turbo_ls_x2 = turbo_ls_x1; turbo_ls_x1 = x;
+  turbo_ls_y2 = turbo_ls_y1; turbo_ls_y1 = y_ls;
+  x = y_ls;
 
-    x = soft_clip(x);
-  ) : (
-    x = x * TURBO_GAIN_I;
-    x = soft_clip(x);
-  );
-
+  x = soft_clip(x);
   x = hard_clip(x);
+  x;
+);
 
+function process_turbo_i(x) (
+  x = soft_clip(x);
+
+  dc_mid_y = dc_alpha * (dc_mid_y + x - dc_mid_x);
+  dc_mid_x = x;
+  x = dc_mid_y;
+
+  x = x * TURBO_GAIN_I;
+  x = soft_clip(x);
+  x = hard_clip(x);
+  x;
+);
+
+function process_post_clip(x) (
   y_aa = aa_a0 * x + aa_a1 * aa_x1 + aa_a2 * aa_x2
          - aa_b1 * aa_y1 - aa_b2 * aa_y2;
   aa_x2 = aa_x1; aa_x1 = x;
@@ -288,15 +361,23 @@ function process_channel(x) (
   ts2_x2 = ts2_x1; ts2_x1 = x;
   ts2_y2 = ts2_y1; ts2_y1 = y_ts2;
   x = y_ts2;
-
-  gain_match = 1 / (1 + (gain_lin - 1) * 0.12);
-  x = x * level_lin * gain_match;
-
-  dc_out_y = dc_alpha * (dc_out_y + x - dc_out_x);
-  dc_out_x = x;
-  x = dc_out_y;
-
   x;
+);
+
+function process_channel(x) (
+  x = process_pre(x);
+
+  turbo_mode == 2 ? (
+    x = process_ds1(x);
+  ) : turbo_mode == 1 ? (
+    x = process_turbo_ii(x);
+    x = process_post_clip(x);
+  ) : (
+    x = process_turbo_i(x);
+    x = process_post_clip(x);
+  );
+
+  x = process_post(x);
 );
 
 @slider
@@ -316,6 +397,7 @@ sr = srate;
   calc_turbo_peaking(sr);
   calc_turbo_cut(sr);
   calc_turbo_lowshelf(sr);
+  calc_ds1_tone(sr);
   calc_aa_lpf(sr);
   calc_tone_stack(sr, tone_pos);
   prev_sr = sr;
@@ -332,6 +414,8 @@ notch_x1 = notch_x1_L; notch_x2 = notch_x2_L;
 notch_y1 = notch_y1_L; notch_y2 = notch_y2_L;
 turbo_ls_x1 = turbo_ls_x1_L; turbo_ls_x2 = turbo_ls_x2_L;
 turbo_ls_y1 = turbo_ls_y1_L; turbo_ls_y2 = turbo_ls_y2_L;
+ds1_lpf_x1 = ds1_lpf_x1_L; ds1_lpf_y1 = ds1_lpf_y1_L;
+ds1_hpf_x1 = ds1_hpf_x1_L; ds1_hpf_y1 = ds1_hpf_y1_L;
 aa_x1 = aa_x1_L; aa_x2 = aa_x2_L;
 aa_y1 = aa_y1_L; aa_y2 = aa_y2_L;
 ts1_x1 = ts1_x1_L; ts1_x2 = ts1_x2_L;
@@ -351,6 +435,8 @@ notch_x1_L = notch_x1; notch_x2_L = notch_x2;
 notch_y1_L = notch_y1; notch_y2_L = notch_y2;
 turbo_ls_x1_L = turbo_ls_x1; turbo_ls_x2_L = turbo_ls_x2;
 turbo_ls_y1_L = turbo_ls_y1; turbo_ls_y2_L = turbo_ls_y2;
+ds1_lpf_x1_L = ds1_lpf_x1; ds1_lpf_y1_L = ds1_lpf_y1;
+ds1_hpf_x1_L = ds1_hpf_x1; ds1_hpf_y1_L = ds1_hpf_y1;
 aa_x1_L = aa_x1; aa_x2_L = aa_x2;
 aa_y1_L = aa_y1; aa_y2_L = aa_y2;
 ts1_x1_L = ts1_x1; ts1_x2_L = ts1_x2;
@@ -372,6 +458,8 @@ notch_x1 = notch_x1_R; notch_x2 = notch_x2_R;
 notch_y1 = notch_y1_R; notch_y2 = notch_y2_R;
 turbo_ls_x1 = turbo_ls_x1_R; turbo_ls_x2 = turbo_ls_x2_R;
 turbo_ls_y1 = turbo_ls_y1_R; turbo_ls_y2 = turbo_ls_y2_R;
+ds1_lpf_x1 = ds1_lpf_x1_R; ds1_lpf_y1 = ds1_lpf_y1_R;
+ds1_hpf_x1 = ds1_hpf_x1_R; ds1_hpf_y1 = ds1_hpf_y1_R;
 aa_x1 = aa_x1_R; aa_x2 = aa_x2_R;
 aa_y1 = aa_y1_R; aa_y2 = aa_y2_R;
 ts1_x1 = ts1_x1_R; ts1_x2 = ts1_x2_R;
@@ -391,6 +479,8 @@ notch_x1_R = notch_x1; notch_x2_R = notch_x2;
 notch_y1_R = notch_y1; notch_y2_R = notch_y2;
 turbo_ls_x1_R = turbo_ls_x1; turbo_ls_x2_R = turbo_ls_x2;
 turbo_ls_y1_R = turbo_ls_y1; turbo_ls_y2_R = turbo_ls_y2;
+ds1_lpf_x1_R = ds1_lpf_x1; ds1_lpf_y1_R = ds1_lpf_y1;
+ds1_hpf_x1_R = ds1_hpf_x1; ds1_hpf_y1_R = ds1_hpf_y1;
 aa_x1_R = aa_x1; aa_x2_R = aa_x2;
 aa_y1_R = aa_y1; aa_y2_R = aa_y2;
 ts1_x1_R = ts1_x1; ts1_x2_R = ts1_x2;
@@ -406,7 +496,7 @@ gfx_rect(0, 0, 400, 250);
 
 gfx_set(0.9, 0.9, 0.9);
 gfx_x = 10; gfx_y = 5;
-gfx_drawstr("Boss DS-2 Turbo Distortion");
+gfx_drawstr("Lozengrad Pedal");
 
 gfx_set(0.15, 0.15, 0.2);
 gfx_rect(5, 22, 390, 105);
@@ -442,7 +532,9 @@ gfx_drawstr("OUT");
 
 gfx_set(0.9, 0.3, 0.3);
 gfx_x = 300; gfx_y = 5;
-turbo_mode == 1 ? gfx_drawstr("TURBO II") : gfx_drawstr("TURBO I");
+turbo_mode == 0 ? gfx_drawstr("TURBO I") : (
+  turbo_mode == 1 ? gfx_drawstr("TURBO II") : gfx_drawstr("DS-1")
+);
 
 gfx_set(0.6, 0.8, 0.6);
 gfx_x = 300; gfx_y = 108;
@@ -475,14 +567,23 @@ i = 0;
 loop(num_pts,
   f = 20 * (1000 ^ (i / (num_pts - 1)));
 
-  A1 = 10 ^ (gain1_db / 40);
-  A2 = 10 ^ (gain2_db / 40);
-  r1 = f / max(f1, 1);
-  r2 = f / max(f2, 1);
+  turbo_mode == 2 ? (
+    // DS-1: LPF (720Hz) + HPF (1060Hz) blend
+    wc_lpf = 2 * $pi * 720;
+    wc_hpf = 2 * $pi * 1060;
+    g_lpf = 1 / sqrt(1 + (f / 720) ^ 2);
+    g_hpf = f / 1060 / sqrt(1 + (f / 1060) ^ 2);
+    total_g = g_lpf * (1 - t) + g_hpf * t;
+  ) : (
+    A1 = 10 ^ (gain1_db / 40);
+    A2 = 10 ^ (gain2_db / 40);
+    r1 = f / max(f1, 1);
+    r2 = f / max(f2, 1);
 
-  g1 = 1 + (A1 - 1) / (1 + (r1 - 1/max(r1,0.001))^2 * q1 * q1);
-  g2 = 1 + (A2 - 1) / (1 + (r2 - 1/max(r2,0.001))^2 * q2 * q2);
-  total_g = g1 * g2;
+    g1 = 1 + (A1 - 1) / (1 + (r1 - 1/max(r1,0.001))^2 * q1 * q1);
+    g2 = 1 + (A2 - 1) / (1 + (r2 - 1/max(r2,0.001))^2 * q2 * q2);
+    total_g = g1 * g2;
+  );
 
   total_db = 20 * log10(max(total_g, 0.001));
 
