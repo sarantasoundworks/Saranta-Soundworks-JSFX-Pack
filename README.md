@@ -17,6 +17,7 @@ Download the latest version for free at [sarantasoundworks.com](https://sarantas
 | **Lozengrad Pedal** | Multi-Pedal Distortion | 7 pedal modes (Vintage Clip, Turbo Clip, Orange Drive, Green Drive, Slam Boost, Modern Drive, Grind Distortion), per-pedal circuit-modeled tone shaping, gain/tone/level controls, 3-band Post-EQ (Low/Mid/High), oversampling (4x/8x), integrated stereo processing |
 | **Lozengrad RetroSpec** | FFT Visualizer | Retro-styled spectrum analyzer with 10 visual styles (Terminal, Blocks, Matrix, Retro, Mask:Smile, Mask:Crescent, Mask:Skull, Radar, Hanzi, Wormhole, HexDump) and 13 color themes |
 | **Lozengrad Spyke** | Transient Shaper | Attack and Sustain controls with output level. Enhances or softens transients independently |
+| **Lozengrad True Peak Limiter** | True Peak Limiter | Threshold/ceiling limiter with polyphase oversampling (1x/2x/4x/8x), harmonic inflate (Oxford-style), dual-window auto-release, peak hold, lookahead, sidechain HPF, and scrolling waveform/GR display |
 
 ## Installation
 
