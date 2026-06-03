@@ -29,6 +29,7 @@ options:gfx_clear=1
   mem_pos = 0;
   delay_L = mem_pos; mem_pos += 480000;
   delay_R = mem_pos; mem_pos += 480000;
+  gr_delay = mem_pos; mem_pos += 480000;
   hbf_states = mem_pos; mem_pos += 400;
 
   // Half-band FIR coefficients (23-tap, odd-symmetric, DC gain = 1.0)
@@ -40,6 +41,9 @@ options:gfx_clear=1
   c21 = 0.000325;
 
   delay_write_pos = 0;
+
+  // Initialize GR delay buffer to unity gain
+  i = 0; loop(480000, gr_delay[i] = 1.0; i += 1; );
 
   hpf_state_L = 0; hpf_state_R = 0;
   hpf_prev_L = 0; hpf_prev_R = 0;
@@ -53,6 +57,8 @@ options:gfx_clear=1
   prev_os = -1;
   prev_lookahead = -1;
   hbf_comp = 1;
+  pre_hbf_L = 0;
+  pre_hbf_R = 0;
 
 
 // ============================================================================
@@ -134,11 +140,11 @@ function inflate(x, amount, mode)
   lookahead_samples = floor(slider3 * 0.001 * srate);
   lookahead_samples < 1 ? lookahead_samples = 1;
 
-  // Oversampling factor
+  // Oversampling factor (enum sliders are 0-indexed: 0=1x, 1=2x, 2=4x, 3=8x)
   os_factor = 1;
+  slider4 >= 1 ? os_factor *= 2;
   slider4 >= 2 ? os_factor *= 2;
   slider4 >= 3 ? os_factor *= 2;
-  slider4 >= 4 ? os_factor *= 2;
 
   // Oversampled lookahead
   lookahead_os = lookahead_samples * os_factor;
@@ -159,12 +165,10 @@ function inflate(x, amount, mode)
   fast_coeff = 1 - exp(-1 / (0.015 * os_srate + 1));
   slow_coeff = 1 - exp(-1 / (0.120 * os_srate + 1));
 
-  // HBF gain compensation (cumulative passband ripple per OS stage pair)
+  // HBF is unity-gain at DC (c0 + 2*sum(odd_taps) = 1.0), no compensation needed
   hbf_comp = 1;
-  slider4 == 2 ? hbf_comp = 1.122;
-  slider4 == 3 ? hbf_comp = 1.259;
-  slider4 == 4 ? hbf_comp = 1.413;
   base_rel_os = slider7 * 0.001 * os_srate;
+  base_rel_srate = slider7 * 0.001 * srate;
 
   // Reset HBF states on OS change
   prev_os != slider4 ? (
@@ -174,7 +178,7 @@ function inflate(x, amount, mode)
 
   // Reset delay buffer on lookahead change
   prev_lookahead != slider3 ? (
-    i = 0; loop(480000, delay_L[i] = 0; delay_R[i] = 0; i += 1; );
+    i = 0; loop(480000, delay_L[i] = 0; delay_R[i] = 0; gr_delay[i] = 1.0; i += 1; );
     delay_write_pos = 0;
     prev_lookahead = slider3;
   );
@@ -185,7 +189,8 @@ function inflate(x, amount, mode)
 // ============================================================================
 
 @block
-  fir_delay = slider4 == 2 ? 11 : slider4 == 3 ? 16 : slider4 == 4 ? 19 : 0;
+  os_mode = slider4;
+  fir_delay = os_mode == 1 ? 11 : os_mode == 2 ? 16 : os_mode == 3 ? 19 : 0;
   pdc_delay = lookahead_samples + fir_delay;
   pdc_bot_ch = 0;
   pdc_top_ch = 2;
@@ -199,125 +204,335 @@ function inflate(x, amount, mode)
   in_L = spl0;
   in_R = spl1;
 
-  os_idx = 0;
-  loop(os_factor,
-    // Zero-stuff interpolation
-    os_idx == 0 ? (
-      cur_L = in_L * os_factor;
-      cur_R = in_R * os_factor;
-    ) : (
-      cur_L = 0;
-      cur_R = 0;
-    );
+  // =========================================================================
+  // UPSAMPLING — CORRECT MULTI-RATE CASCADE
+  // Each 2x stage operates at its OWN internal rate using nested loops.
+  // Stage 1: 2x rate (2 OS samples per input)
+  // Stage 2: 4x rate (4 OS samples, only for slider4 >= 2)
+  // Stage 3: 8x rate (8 OS samples, only for slider4 >= 3)
+  // =========================================================================
 
-    // Upsampling HBF cascade (2x stages)
-    slider4 >= 2 ? (
-      cur_L = process_hbf(cur_L, hbf_states);
-      cur_R = process_hbf(cur_R, hbf_states + 25);
-    );
-    slider4 >= 3 ? (
-      cur_L = process_hbf(cur_L, hbf_states + 50);
-      cur_R = process_hbf(cur_R, hbf_states + 75);
-    );
-    slider4 >= 4 ? (
-      cur_L = process_hbf(cur_L, hbf_states + 100);
-      cur_R = process_hbf(cur_R, hbf_states + 125);
-    );
+  // ── 1x: no oversampling (enum 0-indexed: slider4=0 → 1x) ──
+  slider4 < 0.5 ? (
+    os_idx = 0;
+    cur_L = in_L;
+    cur_R = in_R;
 
-    // Harmonic inflation (pre-limiter density)
     inflate_amt > 0 ? (
       cur_L = inflate(cur_L, inflate_amt, inflate_mode);
       cur_R = inflate(cur_R, inflate_amt, inflate_mode);
     );
 
-    // HBF gain compensation (recovers cumulative passband ripple from filter cascade)
-    cur_L *= hbf_comp;
-    cur_R *= hbf_comp;
-
-    // Lookahead delay line (circular buffer)
-    delay_L[delay_write_pos] = cur_L;
-    delay_R[delay_write_pos] = cur_R;
-
-    read_pos = delay_write_pos - lookahead_os;
-    read_pos < 0 ? read_pos += 480000;
-
-    delayed_L = delay_L[read_pos];
-    delayed_R = delay_R[read_pos];
-
-    delay_write_pos += 1;
-    delay_write_pos >= 480000 ? delay_write_pos = 0;
-
-    // ===== FULL-BAND ENVELOPE (for GR detection) =====
-    sc_env = max(abs(cur_L), abs(cur_R));
-
-    // ===== HPF ENVELOPE (for crest factor / auto-release only) =====
     hpf_state_L = hpf_a * hpf_state_L + hpf_b * (cur_L - hpf_prev_L);
     hpf_prev_L = cur_L;
     hpf_state_R = hpf_a * hpf_state_R + hpf_b * (cur_R - hpf_prev_R);
     hpf_prev_R = cur_R;
     cf_env = max(abs(hpf_state_L), abs(hpf_state_R));
-
-    // Dual-window RMS crest factor (HPF signal: transient vs density)
     fast_rms = fast_rms + fast_coeff * (cf_env * cf_env - fast_rms);
     slow_rms = slow_rms + slow_coeff * (cf_env * cf_env - slow_rms);
     crest = sqrt(fast_rms + EPS) / (sqrt(slow_rms + EPS) + EPS);
 
-    // Adaptive release: transient-heavy -> faster release
-    dyn_release = base_rel_os * min(max(1 / (crest + EPS), 0.5), 3.0);
-    rel_coeff = 1 - exp(-1 / (dyn_release + 1));
-
-    // Instantaneous GR requirement (from FULL-BAND envelope)
+    sc_env = max(abs(cur_L), abs(cur_R));
     inst_gr = 1.0;
-    sc_env > thresh_amp ? inst_gr = thresh_amp / (sc_env + EPS);
-
-    // Peak hold mechanism (prevents gain pumping)
+    sc_env > thresh_amp ? inst_gr = thresh_amp / (sc_env + EPS) : 0;
     inst_gr < target_gr ? (
-      target_gr = inst_gr;
-      hold_timer = lookahead_os;
+      target_gr = inst_gr; hold_timer = lookahead_os;
     ) : (
-      hold_timer > 0 ? (
-        hold_timer -= 1;
-      ) : (
-        target_gr = inst_gr;
-      );
+      hold_timer > 0 ? hold_timer -= 1 : target_gr = inst_gr;
     );
+    dyn_rel_base = base_rel_os * min(max(1 / (crest + EPS), 0.5), 3.0);
+    rel_coeff = 1 - exp(-1 / (dyn_rel_base + 1));
+    target_gr < smooth_gr ? ( smooth_gr = target_gr; ) : ( smooth_gr = smooth_gr + rel_coeff * (target_gr - smooth_gr); );
 
-    // Smooth GR envelope
-    target_gr < smooth_gr ? (
-      smooth_gr = smooth_gr + att_coeff * (target_gr - smooth_gr);
-    ) : (
-      smooth_gr = smooth_gr + rel_coeff * (target_gr - smooth_gr);
-    );
+    delay_L[delay_write_pos] = cur_L;
+    delay_R[delay_write_pos] = cur_R;
+    gr_delay[delay_write_pos] = smooth_gr;
+    read_pos = delay_write_pos - lookahead_os;
+    read_pos < 0 ? read_pos += 480000 : 0;
+    delayed_L = delay_L[read_pos];
+    delayed_R = delay_R[read_pos];
+    applied_gr = gr_delay[read_pos];
+    delay_write_pos += 1;
+    delay_write_pos >= 480000 ? delay_write_pos = 0 : 0;
 
-    // Apply GR to delayed signal
-    out_L = delayed_L * smooth_gr;
-    out_R = delayed_R * smooth_gr;
-
-    // Makeup gain: scale from threshold to ceiling
+    out_L = delayed_L * applied_gr;
+    out_R = delayed_R * applied_gr;
     makeup = ceiling_amp / (thresh_amp + EPS);
     out_L = out_L * makeup;
     out_R = out_R * makeup;
 
-    // Downsampling HBF cascade (reverse order)
-    slider4 >= 4 ? (
-      out_L = process_hbf(out_L, hbf_states + 150);
-      out_R = process_hbf(out_R, hbf_states + 175);
-    );
-    slider4 >= 3 ? (
-      out_L = process_hbf(out_L, hbf_states + 200);
-      out_R = process_hbf(out_R, hbf_states + 225);
-    );
-    slider4 >= 2 ? (
-      out_L = process_hbf(out_L, hbf_states + 250);
-      out_R = process_hbf(out_R, hbf_states + 275);
-    );
-
-    // Decimate: keep only base-rate sample
-    os_idx == 0 ? (
-      // Base-rate hard clipper at true ceiling (catches HBF post-ringing)
-      spl0 = min(max(out_L, -ceiling_amp), ceiling_amp);
-      spl1 = min(max(out_R, -ceiling_amp), ceiling_amp);
-    );
-
-    os_idx += 1;
+    spl0 = min(max(out_L, -ceiling_amp), ceiling_amp);
+    spl1 = min(max(out_R, -ceiling_amp), ceiling_amp);
   );
+
+  // ── 2x: one 2x stage (enum slider4=1) ──
+  slider4 >= 0.5 && slider4 < 1.5 ? (
+    i1 = 0;
+    loop(2,
+      s1_in_L = i1 == 0 ? in_L * 2 : 0;
+      s1_in_R = i1 == 0 ? in_R * 2 : 0;
+      cur_L = process_hbf(s1_in_L, hbf_states);
+      cur_R = process_hbf(s1_in_R, hbf_states + 25);
+      os_idx = i1;
+
+      inflate_amt > 0 ? (
+        cur_L = inflate(cur_L, inflate_amt, inflate_mode);
+        cur_R = inflate(cur_R, inflate_amt, inflate_mode);
+      );
+
+      hpf_state_L = hpf_a * hpf_state_L + hpf_b * (cur_L - hpf_prev_L);
+      hpf_prev_L = cur_L;
+      hpf_state_R = hpf_a * hpf_state_R + hpf_b * (cur_R - hpf_prev_R);
+      hpf_prev_R = cur_R;
+      cf_env = max(abs(hpf_state_L), abs(hpf_state_R));
+      fast_rms = fast_rms + fast_coeff * (cf_env * cf_env - fast_rms);
+      slow_rms = slow_rms + slow_coeff * (cf_env * cf_env - slow_rms);
+      crest = sqrt(fast_rms + EPS) / (sqrt(slow_rms + EPS) + EPS);
+
+      sc_env = max(abs(cur_L), abs(cur_R));
+      inst_gr = 1.0;
+      sc_env > thresh_amp ? inst_gr = thresh_amp / (sc_env + EPS) : 0;
+      inst_gr < target_gr ? ( target_gr = inst_gr; hold_timer = lookahead_os; )
+        : ( hold_timer > 0 ? hold_timer -= 1 : target_gr = inst_gr; );
+      dyn_rel_base = base_rel_os * min(max(1 / (crest + EPS), 0.5), 3.0);
+      rel_coeff = 1 - exp(-1 / (dyn_rel_base + 1));
+      target_gr < smooth_gr ? ( smooth_gr = target_gr; ) : ( smooth_gr = smooth_gr + rel_coeff * (target_gr - smooth_gr); );
+
+      delay_L[delay_write_pos] = cur_L;
+      delay_R[delay_write_pos] = cur_R;
+      gr_delay[delay_write_pos] = smooth_gr;
+      read_pos = delay_write_pos - lookahead_os;
+      read_pos < 0 ? read_pos += 480000 : 0;
+      delayed_L = delay_L[read_pos];
+      delayed_R = delay_R[read_pos];
+      applied_gr = gr_delay[read_pos];
+      delay_write_pos += 1;
+      delay_write_pos >= 480000 ? delay_write_pos = 0 : 0;
+
+      out_L = delayed_L * applied_gr;
+      out_R = delayed_R * applied_gr;
+      makeup = ceiling_amp / (thresh_amp + EPS);
+      out_L = out_L * makeup;
+      out_R = out_R * makeup;
+
+      pre_hbf_L = out_L;
+      pre_hbf_R = out_R;
+
+      slider4 >= 1 ? (
+        out_L = process_hbf(out_L, hbf_states + 250);
+        out_R = process_hbf(out_R, hbf_states + 275);
+      );
+
+      os_idx == 0 ? (
+        spl0 = min(max(pre_hbf_L, -ceiling_amp), ceiling_amp);
+        spl1 = min(max(pre_hbf_R, -ceiling_amp), ceiling_amp);
+      );
+
+      i1 += 1;
+    );
+  );
+
+  // ── 4x: two 2x stages (enum slider4=2) ──
+  slider4 >= 1.5 && slider4 < 2.5 ? (
+    i1 = 0;
+    loop(2,
+      s1_in_L = i1 == 0 ? in_L * 2 : 0;
+      s1_in_R = i1 == 0 ? in_R * 2 : 0;
+      s1_out_L = process_hbf(s1_in_L, hbf_states);
+      s1_out_R = process_hbf(s1_in_R, hbf_states + 25);
+      i2 = 0;
+      loop(2,
+        s2_in_L = i2 == 0 ? s1_out_L * 2 : 0;
+        s2_in_R = i2 == 0 ? s1_out_R * 2 : 0;
+        cur_L = process_hbf(s2_in_L, hbf_states + 50);
+        cur_R = process_hbf(s2_in_R, hbf_states + 75);
+        os_idx = i1 * 2 + i2;
+
+        inflate_amt > 0 ? (
+          cur_L = inflate(cur_L, inflate_amt, inflate_mode);
+          cur_R = inflate(cur_R, inflate_amt, inflate_mode);
+        );
+
+        hpf_state_L = hpf_a * hpf_state_L + hpf_b * (cur_L - hpf_prev_L);
+        hpf_prev_L = cur_L;
+        hpf_state_R = hpf_a * hpf_state_R + hpf_b * (cur_R - hpf_prev_R);
+        hpf_prev_R = cur_R;
+        cf_env = max(abs(hpf_state_L), abs(hpf_state_R));
+        fast_rms = fast_rms + fast_coeff * (cf_env * cf_env - fast_rms);
+        slow_rms = slow_rms + slow_coeff * (cf_env * cf_env - slow_rms);
+        crest = sqrt(fast_rms + EPS) / (sqrt(slow_rms + EPS) + EPS);
+
+        sc_env = max(abs(cur_L), abs(cur_R));
+        inst_gr = 1.0;
+        sc_env > thresh_amp ? inst_gr = thresh_amp / (sc_env + EPS) : 0;
+        inst_gr < target_gr ? ( target_gr = inst_gr; hold_timer = lookahead_os; )
+          : ( hold_timer > 0 ? hold_timer -= 1 : target_gr = inst_gr; );
+        dyn_rel_base = base_rel_os * min(max(1 / (crest + EPS), 0.5), 3.0);
+        rel_coeff = 1 - exp(-1 / (dyn_rel_base + 1));
+        target_gr < smooth_gr ? ( smooth_gr = target_gr; ) : ( smooth_gr = smooth_gr + rel_coeff * (target_gr - smooth_gr); );
+
+        delay_L[delay_write_pos] = cur_L;
+        delay_R[delay_write_pos] = cur_R;
+        gr_delay[delay_write_pos] = smooth_gr;
+        read_pos = delay_write_pos - lookahead_os;
+        read_pos < 0 ? read_pos += 480000 : 0;
+        delayed_L = delay_L[read_pos];
+        delayed_R = delay_R[read_pos];
+        applied_gr = gr_delay[read_pos];
+        delay_write_pos += 1;
+        delay_write_pos >= 480000 ? delay_write_pos = 0 : 0;
+
+        out_L = delayed_L * applied_gr;
+        out_R = delayed_R * applied_gr;
+        makeup = ceiling_amp / (thresh_amp + EPS);
+        out_L = out_L * makeup;
+        out_R = out_R * makeup;
+
+        pre_hbf_L = out_L;
+        pre_hbf_R = out_R;
+
+        slider4 >= 2 ? (
+          out_L = process_hbf(out_L, hbf_states + 200);
+          out_R = process_hbf(out_R, hbf_states + 225);
+        );
+        slider4 >= 1 ? (
+          out_L = process_hbf(out_L, hbf_states + 250);
+          out_R = process_hbf(out_R, hbf_states + 275);
+        );
+
+        os_idx == 0 ? (
+          spl0 = min(max(pre_hbf_L, -ceiling_amp), ceiling_amp);
+          spl1 = min(max(pre_hbf_R, -ceiling_amp), ceiling_amp);
+        );
+
+        i2 += 1;
+      );
+      i1 += 1;
+    );
+  );
+
+  // ── 8x: three 2x stages (enum slider4=3) ──
+  slider4 >= 2.5 ? (
+    i1 = 0;
+    loop(2,
+      s1_in_L = i1 == 0 ? in_L * 2 : 0;
+      s1_in_R = i1 == 0 ? in_R * 2 : 0;
+      s1_out_L = process_hbf(s1_in_L, hbf_states);
+      s1_out_R = process_hbf(s1_in_R, hbf_states + 25);
+      i2 = 0;
+      loop(2,
+        s2_in_L = i2 == 0 ? s1_out_L * 2 : 0;
+        s2_in_R = i2 == 0 ? s1_out_R * 2 : 0;
+        s2_out_L = process_hbf(s2_in_L, hbf_states + 50);
+        s2_out_R = process_hbf(s2_in_R, hbf_states + 75);
+        i3 = 0;
+        loop(2,
+          s3_in_L = i3 == 0 ? s2_out_L * 2 : 0;
+          s3_in_R = i3 == 0 ? s2_out_R * 2 : 0;
+          cur_L = process_hbf(s3_in_L, hbf_states + 100);
+          cur_R = process_hbf(s3_in_R, hbf_states + 125);
+          os_idx = i1 * 4 + i2 * 2 + i3;
+
+          inflate_amt > 0 ? (
+            cur_L = inflate(cur_L, inflate_amt, inflate_mode);
+            cur_R = inflate(cur_R, inflate_amt, inflate_mode);
+          );
+
+          hpf_state_L = hpf_a * hpf_state_L + hpf_b * (cur_L - hpf_prev_L);
+          hpf_prev_L = cur_L;
+          hpf_state_R = hpf_a * hpf_state_R + hpf_b * (cur_R - hpf_prev_R);
+          hpf_prev_R = cur_R;
+          cf_env = max(abs(hpf_state_L), abs(hpf_state_R));
+          fast_rms = fast_rms + fast_coeff * (cf_env * cf_env - fast_rms);
+          slow_rms = slow_rms + slow_coeff * (cf_env * cf_env - slow_rms);
+          crest = sqrt(fast_rms + EPS) / (sqrt(slow_rms + EPS) + EPS);
+
+          sc_env = max(abs(cur_L), abs(cur_R));
+          inst_gr = 1.0;
+          sc_env > thresh_amp ? inst_gr = thresh_amp / (sc_env + EPS) : 0;
+          inst_gr < target_gr ? ( target_gr = inst_gr; hold_timer = lookahead_os; )
+            : ( hold_timer > 0 ? hold_timer -= 1 : target_gr = inst_gr; );
+          dyn_rel_base = base_rel_os * min(max(1 / (crest + EPS), 0.5), 3.0);
+          rel_coeff = 1 - exp(-1 / (dyn_rel_base + 1));
+          target_gr < smooth_gr ? ( smooth_gr = target_gr; ) : ( smooth_gr = smooth_gr + rel_coeff * (target_gr - smooth_gr); );
+
+          delay_L[delay_write_pos] = cur_L;
+          delay_R[delay_write_pos] = cur_R;
+          gr_delay[delay_write_pos] = smooth_gr;
+          read_pos = delay_write_pos - lookahead_os;
+          read_pos < 0 ? read_pos += 480000 : 0;
+          delayed_L = delay_L[read_pos];
+          delayed_R = delay_R[read_pos];
+          applied_gr = gr_delay[read_pos];
+          delay_write_pos += 1;
+          delay_write_pos >= 480000 ? delay_write_pos = 0 : 0;
+
+          out_L = delayed_L * applied_gr;
+          out_R = delayed_R * applied_gr;
+          makeup = ceiling_amp / (thresh_amp + EPS);
+          out_L = out_L * makeup;
+          out_R = out_R * makeup;
+
+          pre_hbf_L = out_L;
+          pre_hbf_R = out_R;
+
+          slider4 >= 3 ? (
+            out_L = process_hbf(out_L, hbf_states + 150);
+            out_R = process_hbf(out_R, hbf_states + 175);
+          );
+          slider4 >= 2 ? (
+            out_L = process_hbf(out_L, hbf_states + 200);
+            out_R = process_hbf(out_R, hbf_states + 225);
+          );
+          slider4 >= 1 ? (
+            out_L = process_hbf(out_L, hbf_states + 250);
+            out_R = process_hbf(out_R, hbf_states + 275);
+          );
+
+          os_idx == 0 ? (
+            spl0 = min(max(pre_hbf_L, -ceiling_amp), ceiling_amp);
+            spl1 = min(max(pre_hbf_R, -ceiling_amp), ceiling_amp);
+          );
+
+          i3 += 1;
+        );
+        i2 += 1;
+      );
+      i1 += 1;
+    );
+  );
+
+@gfx 600 300
+  gfx_r = 1; gfx_g = 1; gfx_b = 1;
+  gfx_x = 10; gfx_y = 10;
+  gfx_printf("slider4: %.1f  os_factor: %.0f", slider4, os_factor);
+  gfx_x = 10; gfx_y = 30;
+  // Show which code path executes (0-indexed enum)
+  slider4 < 0.5 ? gfx_printf("PATH: 1x") : 0;
+  slider4 >= 0.5 && slider4 < 1.5 ? gfx_printf("PATH: 2x") : 0;
+  slider4 >= 1.5 && slider4 < 2.5 ? gfx_printf("PATH: 4x") : 0;
+  slider4 >= 2.5 ? gfx_printf("PATH: 8x") : 0;
+  gfx_x = 10; gfx_y = 50;
+  gfx_printf("lookahead_os: %.0f  lookahead_samples: %.0f", lookahead_os, lookahead_samples);
+  gfx_x = 10; gfx_y = 70;
+  gfx_printf("thresh: %.4f  ceiling: %.4f  makeup: %.4f", thresh_amp, ceiling_amp, ceiling_amp/(thresh_amp+0.000000000001));
+  gfx_x = 10; gfx_y = 90;
+  gfx_printf("target_gr: %.4f  smooth_gr: %.4f", target_gr, smooth_gr);
+  gfx_x = 10; gfx_y = 110;
+  gfx_printf("crest: %.3f  hold_timer: %.0f", crest, hold_timer);
+  gfx_x = 10; gfx_y = 130;
+  gfx_printf("in_L: %.5f  spl0(out): %.5f", in_L, spl0);
+  gfx_x = 10; gfx_y = 150;
+  gfx_printf("applied_gr: %.4f  delayed_L: %.5f", applied_gr, delayed_L);
+  gfx_x = 10; gfx_y = 170;
+  gfx_printf("write_pos: %.0f  read_pos: %.0f", delay_write_pos, read_pos);
+  gfx_x = 10; gfx_y = 190;
+  gfx_printf("inflate_amt: %.2f  inflate_mode: %.0f", inflate_amt, inflate_mode);
+  gfx_x = 10; gfx_y = 210;
+  gfx_printf("srate: %.0f  os_srate: %.0f", srate, os_srate);
+  gfx_x = 10; gfx_y = 230;
+  gfx_printf("base_rel_os: %.1f  rel_coeff: %.6f", base_rel_os, rel_coeff);
+  gfx_x = 10; gfx_y = 250;
+  gfx_printf("att_coeff: %.6f  fast_coeff: %.6f", att_coeff, fast_coeff);
+  gfx_x = 10; gfx_y = 270;
+  gfx_printf("hpf_a: %.6f  hpf_b: %.6f", hpf_a, hpf_b);
