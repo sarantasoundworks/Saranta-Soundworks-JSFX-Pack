@@ -20,7 +20,7 @@ Download the latest version for free at [sarantasoundworks.com](https://sarantas
 | **Lozengrad Spektra** | Spectral Density Controller | FFT-based intelligent spectral compressor. Builds a long-term EMA spectral profile, detects excess via local contrast analysis with psychoacoustic weighting, applies per-bin gain reduction with bidirectional frequency smoothing and per-bin attack/release. Interactive spectrum display with draggable HP/LP/Bell filters, wet/dry mix, auto makeup, output soft-clipper |
 | **Lozengrad Spyke** | Transient Shaper | Attack and Sustain controls with output level. Enhances or softens transients independently |
 | **Lozengrad Trafo** | Transformer Saturation | Dual-path saturator with ADAA anti-aliasing. Asymmetric "Nickel" path for transient attack, symmetric "Iron" path with hysteresis feedback for sustain. Transient-driven morph crossfade between paths. Real-time waveform scope with color-coded blend (cyan=Nickel, orange=Iron), output gain, clip, auto gain |
-| **Lozengrad True Peak Limiter** | True Peak Limiter | Threshold/ceiling limiter with polyphase oversampling (1x/2x/4x/8x), harmonic inflate (Oxford-style), dual-window auto-release, peak hold, lookahead, sidechain HPF, and scrolling waveform/GR display |
+| **Lozengrad Hudut** | True Peak Limiter | Threshold/ceiling limiter with polyphase oversampling (1x/2x/4x/8x), harmonic inflate (Oxford-style), dual-window auto-release, peak hold, lookahead, sidechain HPF, and scrolling waveform/GR display |
 
 ## Installation
 
