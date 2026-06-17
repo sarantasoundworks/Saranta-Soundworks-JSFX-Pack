@@ -1,0 +1,1026 @@
+desc:Lozengrad Spektra
+
+slider1:0<-24,24,0.1>Input (dB)
+slider2:0<-24,24,0.1>Output (dB)
+slider3:100<0,100,1>Wet (%)
+slider4:1800<100,8000,10>Profile Down (ms)
+slider5:55<0,100,1>Selectivity (%)
+slider6:65<0,100,1>Ear Weight (%)
+slider7:50<0,100,1>Sensitivity (%)
+slider8:12<0,48,0.1>Depth (dB)
+slider9:75<0,100,1>Speed (%)
+slider10:50<0,100,1>Smoothness (%)
+slider11:-1<-12,0,0.1>Ceiling (dB)
+slider12:0<0,100,1>Clip Drive (%)
+slider13:0<0,100,1>Auto Makeup (%)
+slider14:100<0,200,1>Threshold (%)
+
+in_pin:L Input
+in_pin:R Input
+out_pin:L Output
+out_pin:R Output
+
+
+@init
+  ext_nodenorm = 1;
+
+  FFT_SIZE = 2048;
+  HOP_SIZE = 512;
+  OLA_SIZE = FFT_SIZE * 2;
+  NUM_BINS = FFT_SIZE / 2 + 1;
+  TWO_PI = 2 * $pi;
+  EPS = 0.000000000001;
+  DB = 20 / log(10);
+
+  // Hann^2 COLA normalization for 4x overlap is 1.5.
+  IFFT_GAIN = 1 / FFT_SIZE;
+  WOLA_GAIN = 2 / 3;
+
+  pdc_delay = FFT_SIZE;
+  pdc_bot_ch = 0;
+  pdc_top_ch = 2;
+
+  mem = 0;
+  win = mem; mem += FFT_SIZE;
+  in_ring_L = mem; mem += FFT_SIZE;
+  in_ring_R = mem; mem += FFT_SIZE;
+  dry_ring_L = mem; mem += FFT_SIZE + 1;
+  dry_ring_R = mem; mem += FFT_SIZE + 1;
+  ola_ring_L = mem; mem += OLA_SIZE;
+  ola_ring_R = mem; mem += OLA_SIZE;
+  fft_L = mem; mem += FFT_SIZE * 2;
+  fft_R = mem; mem += FFT_SIZE * 2;
+  mag_L = mem; mem += NUM_BINS;
+  mag_R = mem; mem += NUM_BINS;
+  mag_linked = mem; mem += NUM_BINS;
+  power_linked = mem; mem += NUM_BINS;
+  ema_mag = mem; mem += NUM_BINS;
+  excess_profile = mem; mem += NUM_BINS;
+  local_floor = mem; mem += NUM_BINS;
+  contrast_excess = mem; mem += NUM_BINS;
+  contrast_smooth = mem; mem += NUM_BINS;
+  combined_excess = mem; mem += NUM_BINS;
+  psycho_weight = mem; mem += NUM_BINS;
+  weighted_excess = mem; mem += NUM_BINS;
+  adaptive_threshold = mem; mem += NUM_BINS;
+  detector_over = mem; mem += NUM_BINS;
+  detector_norm = mem; mem += NUM_BINS;
+  bin_freq = mem; mem += NUM_BINS;
+  target_gain = mem; mem += NUM_BINS;
+  gain_smooth = mem; mem += NUM_BINS;
+  prev_gain = mem; mem += NUM_BINS;
+  suppress_weight = mem; mem += NUM_BINS;
+  disp_smooth = mem; mem += NUM_BINS;
+
+  freembuf(mem);
+
+  i = 0;
+  loop(FFT_SIZE,
+    win[i] = 0.5 - 0.5 * cos(TWO_PI * i / FFT_SIZE);
+    in_ring_L[i] = 0;
+    in_ring_R[i] = 0;
+    i += 1;
+  );
+
+  i = 0;
+  loop(FFT_SIZE + 1,
+    dry_ring_L[i] = 0;
+    dry_ring_R[i] = 0;
+    i += 1;
+  );
+
+  i = 0;
+  loop(OLA_SIZE,
+    ola_ring_L[i] = 0;
+    ola_ring_R[i] = 0;
+    i += 1;
+  );
+
+  i = 0;
+  loop(NUM_BINS,
+    mag_L[i] = 0;
+    mag_R[i] = 0;
+    mag_linked[i] = 0;
+    power_linked[i] = 0;
+    ema_mag[i] = EPS;
+    excess_profile[i] = 1;
+    local_floor[i] = EPS;
+    contrast_excess[i] = 1;
+    contrast_smooth[i] = EPS;
+    combined_excess[i] = 1;
+    bin_freq[i] = i * srate / FFT_SIZE;
+    psycho_weight[i] = 1;
+    weighted_excess[i] = 1;
+    adaptive_threshold[i] = 1.25;
+    detector_over[i] = 0;
+    detector_norm[i] = 0;
+    target_gain[i] = 1;
+    gain_smooth[i] = 1;
+    prev_gain[i] = 1;
+    suppress_weight[i] = 1;
+    disp_smooth[i] = EPS;
+    i += 1;
+  );
+
+  write_pos = 0;
+  ola_pos = 0;
+  dry_pos = 0;
+  hop_count = 0;
+  frame_count = 0;
+
+  spectrum_peak = 0;
+  spectrum_peak_bin = 0;
+  spectrum_rms = 0;
+  spectrum_centroid = 0;
+  stereo_diff = 0;
+  profile_peak_excess = 1;
+  profile_peak_bin = 0;
+  profile_avg_excess = 1;
+  contrast_peak_excess = 1;
+  contrast_peak_bin = 0;
+  contrast_avg_excess = 1;
+  detector_peak_excess = 1;
+  detector_peak_bin = 0;
+  detector_avg_excess = 1;
+  weighted_peak_excess = 1;
+  weighted_peak_bin = 0;
+  weighted_avg_excess = 1;
+  threshold_peak_over = 0;
+  threshold_peak_bin = 0;
+  threshold_avg_over = 0;
+  threshold_active_bins = 0;
+
+  meter_in = 0;
+  meter_out = 0;
+  meter_coeff = exp(-1 / (0.050 * srate));
+  in_gain = 1;
+  out_gain = 1;
+  wet = 1;
+  dry = 0;
+  profile_up_ms = 120;
+  profile_down_ms = 1800;
+  profile_down_coeff = exp(-HOP_SIZE / (0.001 * profile_down_ms * srate));
+  profile_up_coeff = exp(-HOP_SIZE / (0.001 * profile_up_ms * srate));
+  selectivity = 0.55;
+  ear_weight = 0.65;
+  sensitivity = 0.50;
+  freq_smooth_coeff = 0.72;
+  psycho_table_ready = 0;
+  last_srate = srate;
+  depth_db = 12;
+  speed_pct = 0.65;
+  smoothness_pct = 0.70;
+  transient_protect = 0.50;
+  transient_fast = 0;
+  transient_slow = 0;
+  transient_amount = 0;
+  transient_fast_coeff = exp(-1 / (0.002 * srate));
+  transient_slow_coeff = exp(-1 / (0.050 * srate));
+  gain_attack_ms = 10;
+  gain_release_ms = 200;
+  gain_attack_coeff = exp(-HOP_SIZE / (0.001 * gain_attack_ms * srate));
+  gain_release_coeff = exp(-HOP_SIZE / (0.001 * gain_release_ms * srate));
+  gr_peak_db = 0;
+  gr_peak_bin = 0;
+  gr_avg = 0;
+  disp_coeff = 0.88;
+  ceiling_db = -1;
+  clip_drive = 0;
+  auto_makeup = 0;
+  clip_active = 0;
+  spectrum_avg_mag = EPS;
+
+  // Load canvas filter state from gmem (persists within REAPER session)
+  gmem[0] == 12345 ? (
+    hp_hz = gmem[1];
+    lp_hz = gmem[2];
+    bell_hz = gmem[3];
+    bell_gain_db = gmem[4];
+    bell_q = gmem[5];
+  );
+  hp_hz == 0 ? hp_hz = 20;
+  lp_hz == 0 ? lp_hz = 20000;
+  bell_hz == 0 ? bell_hz = 1000;
+  bell_gain_db == 0 ? bell_gain_db = 0;
+  bell_q == 0 ? bell_q = 0.6;
+  // Fallback defaults (overridden by @slider on first run)
+  depth_db == 0 ? depth_db = 12;
+  sensitivity == 0 ? sensitivity = 0.50;
+  selectivity == 0 ? selectivity = 0.55;
+  ear_weight == 0 ? ear_weight = 0.65;
+  in_gain == 0 ? in_gain = 1;
+  out_gain == 0 ? out_gain = 1;
+  wet == 0 ? wet = 1;
+  dry == 0 ? dry = 0;
+  drag_target = 0;
+
+function db2amp(db) local()
+(
+  exp(db * log(10) / 20);
+);
+
+function amp2db(x) local()
+(
+  DB * log(max(abs(x), EPS));
+);
+
+function log_gauss_oct(freq, center, width_oct) local(oct)
+(
+  oct = log(max(freq, 1) / center) / log(2);
+  exp(-0.5 * oct * oct / (width_oct * width_oct));
+);
+
+function calc_psycho_weight(freq) local(weight, low_guard, mud, presence, air)
+(
+  low_guard = log_gauss_oct(freq, 45, 1.05);
+  mud = log_gauss_oct(freq, 280, 0.85);
+  presence = log_gauss_oct(freq, 3300, 0.95);
+  air = log_gauss_oct(freq, 12500, 0.90);
+
+  weight = 1.00;
+  weight -= 0.34 * low_guard;
+  weight += 0.10 * mud;
+  weight += 0.28 * presence;
+  weight -= 0.12 * air;
+
+  min(1.35, max(0.55, weight));
+);
+
+function update_psycho_table() local(i)
+(
+  i = 0;
+  loop(NUM_BINS,
+    bin_freq[i] = i * srate / FFT_SIZE;
+    psycho_weight[i] = calc_psycho_weight(bin_freq[i]);
+    i += 1;
+  );
+
+  psycho_table_ready = 1;
+  last_srate = srate;
+);
+
+function soft_clip(x, threshold, ceiling) local(abs_x, t, tt)
+(
+  abs_x = abs(x);
+  abs_x <= threshold ? x : (
+    abs_x >= ceiling ? sign(x) * ceiling : (
+      t = (abs_x - threshold) / (ceiling - threshold);
+      tt = t * t;
+      sign(x) * (threshold + (ceiling - threshold) * (3 * tt - 2 * tt * t));
+    );
+  );
+);
+
+function wrap_fft_pos(x) local()
+(
+  x >= FFT_SIZE ? x - FFT_SIZE : x;
+);
+
+function wrap_ola_pos(x) local()
+(
+  x >= OLA_SIZE ? x - OLA_SIZE : x;
+);
+
+function analyze_linked_spectrum() local(
+  i, reL, imL, reR, imR, pL, pR, linked_power, linked_mag,
+  sum_mag, sum_power, weighted_freq, diff_sum, sum_lr
+)
+(
+  spectrum_peak = 0;
+  spectrum_peak_bin = 0;
+  sum_mag = 0;
+  sum_power = 0;
+  weighted_freq = 0;
+  diff_sum = 0;
+  sum_lr = EPS;
+
+  i = 0;
+  loop(NUM_BINS,
+    reL = fft_L[2 * i];
+    imL = fft_L[2 * i + 1];
+    reR = fft_R[2 * i];
+    imR = fft_R[2 * i + 1];
+
+    pL = reL * reL + imL * imL;
+    pR = reR * reR + imR * imR;
+    linked_power = 0.5 * (pL + pR);
+    linked_mag = sqrt(max(linked_power, 0));
+
+    mag_L[i] = sqrt(max(pL, 0));
+    mag_R[i] = sqrt(max(pR, 0));
+    power_linked[i] = linked_power;
+    mag_linked[i] = linked_mag;
+
+    linked_mag > spectrum_peak ? (
+      spectrum_peak = linked_mag;
+      spectrum_peak_bin = i;
+    );
+
+    sum_mag += linked_mag;
+    sum_power += linked_power;
+    weighted_freq += linked_mag * bin_freq[i];
+    diff_sum += abs(mag_L[i] - mag_R[i]);
+    sum_lr += mag_L[i] + mag_R[i];
+
+    i += 1;
+  );
+
+  spectrum_rms = sqrt(max(sum_power / NUM_BINS, 0));
+  spectrum_avg_mag = sum_mag / NUM_BINS;
+  spectrum_centroid = weighted_freq / max(sum_mag, EPS);
+  stereo_diff = diff_sum / sum_lr;
+);
+
+function update_ema_profile() local(i, current, previous, coeff, excess_sum, excess)
+(
+  profile_peak_excess = 1;
+  profile_peak_bin = 0;
+  excess_sum = 0;
+
+  i = 0;
+  loop(NUM_BINS,
+    current = mag_linked[i];
+    previous = ema_mag[i];
+    coeff = current > previous ? profile_up_coeff : profile_down_coeff;
+
+    previous = current + coeff * (previous - current);
+    previous = max(previous, EPS);
+    ema_mag[i] = previous;
+
+    excess = current / previous;
+    excess_profile[i] = excess;
+    excess_sum += excess;
+
+    excess > profile_peak_excess ? (
+      profile_peak_excess = excess;
+      profile_peak_bin = i;
+    );
+
+    i += 1;
+  );
+
+  profile_avg_excess = excess_sum / NUM_BINS;
+);
+
+function update_local_contrast() local(
+  i, forward, backward, current, floor_mag, contrast, contrast_sum,
+  combined, detector_sum
+)
+(
+  contrast_peak_excess = 1;
+  contrast_peak_bin = 0;
+  detector_peak_excess = 1;
+  detector_peak_bin = 0;
+  contrast_sum = 0;
+  detector_sum = 0;
+
+  forward = mag_linked[0];
+  i = 0;
+  loop(NUM_BINS,
+    current = mag_linked[i];
+    forward = current + freq_smooth_coeff * (forward - current);
+    contrast_smooth[i] = forward;
+    i += 1;
+  );
+
+  backward = mag_linked[NUM_BINS - 1];
+  i = NUM_BINS - 1;
+  loop(NUM_BINS,
+    current = mag_linked[i];
+    backward = current + freq_smooth_coeff * (backward - current);
+    floor_mag = max(0.5 * (contrast_smooth[i] + backward), EPS);
+    local_floor[i] = floor_mag;
+
+    contrast = current / floor_mag;
+    contrast_excess[i] = contrast;
+    contrast_sum += contrast;
+
+    contrast > contrast_peak_excess ? (
+      contrast_peak_excess = contrast;
+      contrast_peak_bin = i;
+    );
+
+    // Spectral Balance: blend of local contrast + profile tracking
+    combined = contrast * selectivity + excess_profile[i] * (1 - selectivity);
+    combined_excess[i] = combined;
+    detector_sum += combined;
+
+    combined > detector_peak_excess ? (
+      detector_peak_excess = combined;
+      detector_peak_bin = i;
+    );
+
+    i -= 1;
+  );
+
+  contrast_avg_excess = contrast_sum / NUM_BINS;
+  detector_avg_excess = detector_sum / NUM_BINS;
+);
+
+function apply_psychoacoustic_weighting() local(
+  i, effective_weight, above_unity, weighted, weighted_sum
+)
+(
+  weighted_peak_excess = 1;
+  weighted_peak_bin = 0;
+  weighted_sum = 0;
+
+  i = 0;
+  loop(NUM_BINS,
+    effective_weight = 1 + ear_weight * (psycho_weight[i] - 1);
+    above_unity = max(0, combined_excess[i] - 1);
+    weighted = 1 + above_unity * effective_weight;
+    weighted_excess[i] = weighted;
+    weighted_sum += weighted;
+
+    weighted > weighted_peak_excess ? (
+      weighted_peak_excess = weighted;
+      weighted_peak_bin = i;
+    );
+
+    i += 1;
+  );
+
+  weighted_avg_excess = weighted_sum / NUM_BINS;
+);
+
+function update_adaptive_thresholds() local(
+  i, base_threshold, freq_bias, threshold, over, norm, over_sum
+)
+(
+  threshold_peak_over = 0;
+  threshold_peak_bin = 0;
+  threshold_active_bins = 0;
+  over_sum = 0;
+
+  // Sensitivity maps to a conservative detector ratio range.
+  base_threshold = 1.55 - 0.45 * sensitivity + threshold_offset;
+
+  i = 0;
+  loop(NUM_BINS,
+    // Sensitive bands get a slightly lower threshold, protected bands higher.
+    freq_bias = 1 - 0.18 * ear_weight * (psycho_weight[i] - 1);
+    threshold = max(1.003, base_threshold * freq_bias);
+    adaptive_threshold[i] = threshold;
+
+    over = weighted_excess[i] - threshold;
+    over = max(0, over);
+    detector_over[i] = over;
+
+    norm = over / max(threshold - 1, 0.001);
+    detector_norm[i] = min(12, norm);
+    over_sum += over;
+
+    over > 0 ? threshold_active_bins += 1;
+    over > threshold_peak_over ? (
+      threshold_peak_over = over;
+      threshold_peak_bin = i;
+    );
+
+    i += 1;
+  );
+
+  threshold_avg_over = over_sum / NUM_BINS;
+);
+
+function compute_spectral_gain() local(
+  i, over_norm, ratio, gr_db, eff_depth, peak_gr, peak_bi, sum_gr, knee,
+  bell_r, bell_gauss, bell_factor
+)
+(
+  peak_gr = 0;
+  peak_bi = 0;
+  sum_gr = 0;
+  eff_depth = depth_db * (1 - transient_protect * min(transient_amount, 1));
+  knee = 0.5;
+
+  i = 0;
+  loop(NUM_BINS,
+    over_norm = min(detector_norm[i] * suppress_weight[i], 12);
+    ratio = over_norm / (over_norm + knee);
+    gr_db = -eff_depth * ratio * ratio;
+    target_gain[i] = exp(gr_db * log(10) / 20);
+
+    bell_r = bin_freq[i] / max(bell_hz, 1);
+    bell_gauss = exp(-2 * ((log(bell_r) / log(2) * bell_q) ^ 2));
+    bell_factor = exp(-bell_gain_db * bell_gauss * log(10) / 20);
+    target_gain[i] *= bell_factor;
+
+    sum_gr += gr_db;
+
+    gr_db < peak_gr ? (
+      peak_gr = gr_db;
+      peak_bi = i;
+    );
+
+    i += 1;
+  );
+
+  gr_peak_db = peak_gr;
+  gr_peak_bin = peak_bi;
+  gr_avg = sum_gr / NUM_BINS;
+);
+
+function smooth_gain_frequency() local(i, coeff, forward, backward)
+(
+  coeff = 0.50 + 0.45 * smoothness_pct;
+
+  forward = target_gain[0];
+  i = 0;
+  loop(NUM_BINS,
+    forward = target_gain[i] + coeff * (forward - target_gain[i]);
+    gain_smooth[i] = forward;
+    i += 1;
+  );
+
+  backward = gain_smooth[NUM_BINS - 1];
+  i = NUM_BINS - 1;
+  loop(NUM_BINS,
+    backward = gain_smooth[i] + coeff * (backward - gain_smooth[i]);
+    gain_smooth[i] = backward;
+    i -= 1;
+  );
+);
+
+function smooth_gain_temporal() local(i, target, coeff, atk_c, rel_c)
+(
+  atk_c = gain_attack_coeff; rel_c = gain_release_coeff;
+  i = 0;
+  loop(NUM_BINS,
+    target = gain_smooth[i];
+    coeff = target < prev_gain[i] ? atk_c : rel_c;
+    gain_smooth[i] = target + coeff * (prev_gain[i] - target);
+    prev_gain[i] = gain_smooth[i];
+    i += 1;
+  );
+);
+
+function apply_spectral_gain() local(i, g)
+(
+  i = 0;
+  loop(NUM_BINS,
+    g = gain_smooth[i];
+    fft_L[2 * i] *= g;
+    fft_L[2 * i + 1] *= g;
+    fft_R[2 * i] *= g;
+    fft_R[2 * i + 1] *= g;
+    i += 1;
+  );
+);
+
+function compute_suppress_mask() local(i, f, hp_r, lp_r, hp_m, lp_m)
+(
+  i = 1;
+  loop(NUM_BINS - 1,
+    f = max(bin_freq[i], 1);
+
+    hp_r = f / hp_hz;
+    hp_m = hp_r * hp_r * hp_r * hp_r * hp_r * hp_r * hp_r * hp_r / (1 + hp_r * hp_r * hp_r * hp_r * hp_r * hp_r * hp_r * hp_r);
+
+    lp_r = f / lp_hz;
+    lp_m = 1 / (1 + lp_r * lp_r * lp_r * lp_r * lp_r * lp_r * lp_r * lp_r);
+
+    suppress_weight[i] = max(0, hp_m * lp_m);
+    i += 1;
+  );
+  suppress_weight[0] = 0;
+);
+
+function process_stft_frame() local(i, src, dst, wr, w, l, r, o)
+(
+  // Copy the most recent FFT_SIZE samples into chronological order.
+  i = 0;
+  src = write_pos + 1;
+  loop(FFT_SIZE,
+    src >= FFT_SIZE ? src = 0;
+    w = win[i];
+
+    fft_L[2 * i] = in_ring_L[src] * w;
+    fft_L[2 * i + 1] = 0;
+    fft_R[2 * i] = in_ring_R[src] * w;
+    fft_R[2 * i + 1] = 0;
+
+    src += 1;
+    i += 1;
+  );
+
+  fft(fft_L, FFT_SIZE);
+  fft_permute(fft_L, FFT_SIZE);
+
+  fft(fft_R, FFT_SIZE);
+  fft_permute(fft_R, FFT_SIZE);
+
+  analyze_linked_spectrum();
+  update_ema_profile();
+  update_local_contrast();
+  apply_psychoacoustic_weighting();
+  update_adaptive_thresholds();
+  compute_suppress_mask();
+
+  compute_spectral_gain();
+  smooth_gain_frequency();
+  smooth_gain_temporal();
+  apply_spectral_gain();
+
+  fft_ipermute(fft_L, FFT_SIZE);
+  ifft(fft_L, FFT_SIZE);
+
+  fft_ipermute(fft_R, FFT_SIZE);
+  ifft(fft_R, FFT_SIZE);
+
+  // Schedule the reconstructed frame FFT_SIZE samples later.
+  dst = ola_pos + 1;
+  i = 0;
+  loop(FFT_SIZE,
+    dst >= OLA_SIZE ? dst = 0;
+
+    w = win[i] * IFFT_GAIN * WOLA_GAIN;
+    ola_ring_L[dst] += fft_L[2 * i] * w;
+    ola_ring_R[dst] += fft_R[2 * i] * w;
+
+    dst += 1;
+    i += 1;
+  );
+
+  frame_count += 1;
+);
+
+@slider
+  in_gain = db2amp(slider1);
+  out_gain = db2amp(slider2);
+  wet = slider3 * 0.01;
+  dry = 1 - wet;
+  profile_down_ms = slider4;
+  profile_up_ms = 120;
+  selectivity = slider5 * 0.01;
+  ear_weight = slider6 * 0.01;
+  sensitivity = slider7 * 0.01;
+  depth_db = slider8;
+  speed_pct = slider9 * 0.01;
+  smoothness_pct = slider10 * 0.01;
+  ceiling_db = slider11;
+  clip_drive = slider12 * 0.01;
+  auto_makeup = slider13 * 0.01;
+  threshold_offset = (50 - slider14) * 0.020;
+  freq_smooth_coeff = 0.45 + 0.45 * selectivity;
+  profile_up_coeff = exp(-HOP_SIZE / (0.001 * profile_up_ms * srate));
+  profile_down_coeff = exp(-HOP_SIZE / (0.001 * profile_down_ms * srate));
+  gain_attack_ms = 200 - 195 * speed_pct;
+  gain_release_ms = 2000 - 1950 * speed_pct;
+  gain_attack_coeff = exp(-HOP_SIZE / (0.001 * gain_attack_ms * srate));
+  gain_release_coeff = exp(-HOP_SIZE / (0.001 * gain_release_ms * srate));
+  transient_fast_coeff = exp(-1 / (0.002 * srate));
+  transient_slow_coeff = exp(-1 / (0.050 * srate));
+  (!psycho_table_ready || last_srate != srate) ? update_psycho_table();
+
+@sample
+  (!psycho_table_ready || last_srate != srate) ? update_psycho_table();
+
+  inL = spl0 * in_gain;
+  inR = spl1 * in_gain;
+
+  dry_ring_L[dry_pos] = inL;
+  dry_ring_R[dry_pos] = inR;
+
+  in_ring_L[write_pos] = inL;
+  in_ring_R[write_pos] = inR;
+
+  peak = max(abs(inL), abs(inR));
+  transient_fast = max(peak, transient_fast * transient_fast_coeff);
+  transient_slow = max(peak, transient_slow * transient_slow_coeff);
+  transient_amount = transient_slow > 0.001 ?
+    min(1, max(0, (transient_fast - transient_slow) / transient_slow)) : 0;
+
+  procL = ola_ring_L[ola_pos];
+  procR = ola_ring_R[ola_pos];
+  ola_ring_L[ola_pos] = 0;
+  ola_ring_R[ola_pos] = 0;
+
+  dry_read = dry_pos + 1;
+  dry_read >= FFT_SIZE + 1 ? dry_read = 0;
+  dryL = dry_ring_L[dry_read];
+  dryR = dry_ring_R[dry_read];
+
+  mixL = procL * wet + dryL * dry;
+  mixR = procR * wet + dryR * dry;
+
+  makeup_lin = exp(-gr_avg * auto_makeup * log(10) / 20);
+  mixL *= makeup_lin;
+  mixR *= makeup_lin;
+
+  mixL *= out_gain;
+  mixR *= out_gain;
+
+  drive_lin = 1 + clip_drive * 0.5;
+  mixL *= drive_lin;
+  mixR *= drive_lin;
+
+  ceiling_lin = db2amp(ceiling_db);
+  clip_thresh = ceiling_lin * 0.75;
+
+  mixL = soft_clip(mixL, clip_thresh, ceiling_lin);
+  mixR = soft_clip(mixR, clip_thresh, ceiling_lin);
+
+  clip_active = max(abs(mixL) > clip_thresh ? 1 : 0, abs(mixR) > clip_thresh ? 1 : 0);
+
+  spl0 = mixL;
+  spl1 = mixR;
+
+  meter_in = max(max(abs(inL), abs(inR)), meter_in * meter_coeff);
+  meter_out = max(max(abs(spl0), abs(spl1)), meter_out * meter_coeff);
+
+  hop_count += 1;
+  hop_count >= HOP_SIZE ? (
+    process_stft_frame();
+    hop_count = 0;
+  );
+
+  write_pos += 1;
+  write_pos >= FFT_SIZE ? write_pos = 0;
+
+  ola_pos += 1;
+  ola_pos >= OLA_SIZE ? ola_pos = 0;
+
+  dry_pos += 1;
+  dry_pos >= FFT_SIZE + 1 ? dry_pos = 0;
+
+@gfx 720 340
+  gfx_getchar();
+  gfx_clear = 0x141414;
+  gfx_setfont(1, "Arial", 14);
+  gfx_r = 0.08; gfx_g = 0.08; gfx_b = 0.08; gfx_a = 1;
+  gfx_rect(0, 0, gfx_w, gfx_h);
+
+  // Spectrum geometry (needed early for mouse interaction)
+  spec_x = 46;  spec_y = 70;
+  spec_w = 662; spec_h = 248;
+  spec_bot = spec_y + spec_h;
+  nyq = srate * 0.5;
+  freq_min = 20;
+  log_scl = log(nyq / freq_min);
+  db_min_s = -80;  db_rng = 80;
+
+  // ---- Mouse interaction for filter handles ----
+  mx_hp = spec_x + log(max(hp_hz, freq_min) / freq_min) / log_scl * spec_w;
+  mx_lp = spec_x + log(min(lp_hz, nyq) / freq_min) / log_scl * spec_w;
+  mx_bell = spec_x + log(max(bell_hz, freq_min) / freq_min) / log_scl * spec_w;
+  my_bell = spec_y + spec_h * (0.5 - bell_gain_db / 24);
+
+  // Double-click reset for filter handles
+  mouse_cap & 1 && last_mb == 0 ? (
+    dgap = tick - last_tick;
+    dgap > 0 && dgap < 30 ? (
+      abs(mouse_x - mx_hp) < 25 ? (hp_hz = 20;);
+      abs(mouse_x - mx_lp) < 25 ? (lp_hz = 20000;);
+      sqrt((mouse_x - mx_bell)^2 + (mouse_y - my_bell)^2) < 30 ? (bell_hz = 1000; bell_gain_db = 0;);
+    );
+    last_tick = tick;
+  );
+  tick += 1;
+
+  mouse_cap & 1 ? (
+    drag_target == 0 ? (
+      abs(mouse_x - mx_hp) < 25 ? drag_target = 1;
+      drag_target == 0 && abs(mouse_x - mx_lp) < 25 ? drag_target = 2;
+      drag_target == 0 && sqrt((mouse_x - mx_bell)^2 + (mouse_y - my_bell)^2) < 30 ? drag_target = 3;
+    );
+    drag_target ? (
+      f = max(20, min(20000, freq_min * exp((mouse_x - spec_x) / spec_w * log_scl)));
+      drag_target == 1 ? hp_hz = max(20, min(lp_hz - 20, floor(f)));
+      drag_target == 2 ? lp_hz = min(20000, max(hp_hz + 20, floor(f)));
+      drag_target == 3 ? (
+        bell_hz = max(20, min(20000, floor(f)));
+        bg = (spec_y + spec_h * 0.5 - mouse_y) * 24 / spec_h;
+        bell_gain_db = max(-12, min(12, floor(bg * 10 + 0.5) * 0.1));
+      );
+    );
+  ) : drag_target = 0;
+
+  gfx_r = 0.86; gfx_g = 0.89; gfx_b = 0.92;
+  gfx_x = 12; gfx_y = 8;
+  gfx_drawstr("Intelligent Spectral Density Controller");
+
+  gfx_setfont(1, "Arial", 11);
+  gfx_r = 0.48; gfx_g = 0.54; gfx_b = 0.58;
+  gfx_x = 290; gfx_y = 10;
+  gfx_drawstr("Output stage + spectrum");
+
+  gfx_setfont(1, "Arial", 11);
+  gfx_r = 0.48; gfx_g = 0.54; gfx_b = 0.58;
+  gfx_x = 460; gfx_y = 10;
+  gfx_drawstr("Spectral Balance");
+
+  gfx_setfont(1, "Arial", 10);
+  in_db = amp2db(meter_in);
+  out_db = amp2db(meter_out);
+
+  gfx_r = 0.86; gfx_g = 0.89; gfx_b = 0.92;
+  gfx_x = 12; gfx_y = 32; gfx_drawstr("In");
+  gfx_x = 12; gfx_y = 48; gfx_drawstr("Out");
+
+  gfx_r = 0.16; gfx_g = 0.18; gfx_b = 0.20;
+  gfx_rect(30, 32, 140, 11);
+  gfx_rect(30, 48, 140, 11);
+  in_w = min(140, max(0, (in_db + 60) / 60 * 140));
+  out_w = min(140, max(0, (out_db + 60) / 60 * 140));
+  gfx_r = 0.20; gfx_g = 0.72; gfx_b = 0.86;
+  gfx_rect(30, 32, in_w, 11);
+  gfx_r = 0.70; gfx_g = 0.86; gfx_b = 0.34;
+  gfx_rect(30, 48, out_w, 11);
+
+  gfx_r = 0.86; gfx_g = 0.89; gfx_b = 0.92;
+  gfx_x = 174; gfx_y = 32; gfx_drawnumber(in_db, 1); gfx_drawstr(" dB");
+  gfx_x = 174; gfx_y = 48; gfx_drawnumber(out_db, 1); gfx_drawstr(" dB");
+
+  gfx_r = 0.58; gfx_g = 0.66; gfx_b = 0.72;
+  gfx_x = 260; gfx_y = 32;
+  gfx_drawstr("GR: "); gfx_drawnumber(gr_peak_db, 1); gfx_drawstr(" dB");
+  gfx_x = 260; gfx_y = 48;
+  gfx_drawstr("Lat: "); gfx_drawnumber(FFT_SIZE, 0); gfx_drawstr(" smp");
+  gfx_x = 360; gfx_y = 32;
+  gfx_drawstr("Det: "); gfx_drawnumber(detector_peak_excess, 2);
+  gfx_x = 360; gfx_y = 48;
+  gfx_drawstr("Active: "); gfx_drawnumber(threshold_active_bins, 0);
+
+  // Legend on right side, stacked vertically with color blocks
+  gfx_setfont(1, "Arial", 8);
+  gfx_r = 0.15; gfx_g = 0.65; gfx_b = 0.80;
+  gfx_rect(498, 34, 10, 4); gfx_x = 510; gfx_y = 30; gfx_drawstr("input");
+  gfx_r = 0.45; gfx_g = 0.80; gfx_b = 0.20;
+  gfx_rect(498, 42, 10, 4); gfx_x = 510; gfx_y = 38; gfx_drawstr("output");
+  gfx_r = 0.85; gfx_g = 0.30; gfx_b = 0.12;
+  gfx_rect(498, 50, 10, 4); gfx_x = 510; gfx_y = 46; gfx_drawstr("reduction");
+
+  // Spectrum area (geometry already set above)
+  gfx_r = 0.06; gfx_g = 0.06; gfx_b = 0.08;
+  gfx_rect(spec_x, spec_y, spec_w, spec_h);
+
+  // Horizontal grid lines + dB labels
+  gfx_setfont(1, "Arial", 8);
+  db_lvl = -12;
+  while (db_lvl >= -72) (
+    gy = spec_bot - (db_lvl - db_min_s) / db_rng * spec_h;
+    gfx_r = 0.14; gfx_g = 0.14; gfx_b = 0.16; gfx_a = 0.5;
+    gfx_x = spec_x;  gfx_y = gy;  gfx_lineto(spec_x + spec_w, gy, 1);
+    gfx_r = 0.35; gfx_g = 0.38; gfx_b = 0.42;
+    gfx_x = 2;  gfx_y = gy - 5;
+    gfx_drawnumber(db_lvl, 0);
+    db_lvl -= 12;
+  );
+
+  // Vertical grid lines (octave markers)
+  freq_mark = 31.25;
+  while (freq_mark < nyq) (
+    gx = spec_x + log(freq_mark / freq_min) / log_scl * spec_w;
+    gx > spec_x ? (
+      gfx_r = 0.12; gfx_g = 0.12; gfx_b = 0.14;
+      gfx_x = gx;  gfx_y = spec_y;  gfx_lineto(gx, spec_bot, 1);
+    );
+    freq_mark *= 2;
+  );
+
+  // Spectrum bars with slope correction and temporal smoothing
+  fft_norm = FFT_SIZE / 2;
+  step = 3;
+  col = 0;
+  while (col < spec_w) (
+    gx = spec_x + col;
+    col_frac = col / spec_w;
+    freq = freq_min * exp(col_frac * log_scl);
+    bin = max(1, min(NUM_BINS - 1, floor(freq * FFT_SIZE / srate + 0.5)));
+
+    // Slope correction: 4.5 dB/octave (pink-like), ref 1 kHz
+    slope_db = 4.5 * log(max(freq, 20) / 1000) / log(2);
+
+    // Temporal smoothing on display magnitude, normalized to dBFS
+    raw = mag_linked[bin] / fft_norm;
+    disp_smooth[bin] = raw + disp_coeff * (disp_smooth[bin] - raw);
+    smoothed = disp_smooth[bin];
+
+    db_val = amp2db(smoothed) + slope_db;
+    gy = spec_bot - (min(max(db_val, db_min_s), 0) - db_min_s) / db_rng * spec_h;
+    gy = max(spec_y, min(spec_bot, gy));
+
+    mag_after = smoothed * gain_smooth[bin];
+    db_after = amp2db(mag_after) + slope_db;
+    gy_after = spec_bot - (min(max(db_after, db_min_s), 0) - db_min_s) / db_rng * spec_h;
+    gy_after = max(spec_y, min(spec_bot, gy_after));
+
+    // Before bar (cyan, bottom to level)
+    gfx_r = 0.15; gfx_g = 0.65; gfx_b = 0.80; gfx_a = 0.50;
+    gfx_rect(gx, gy, 1, spec_bot - gy);
+
+    // After bar (green, on top = shorter = reduction visible as cyan)
+    gfx_r = 0.45; gfx_g = 0.80; gfx_b = 0.20; gfx_a = 0.75;
+    gfx_rect(gx, gy_after, 1, spec_bot - gy_after);
+
+    // Gain reduction bars from top (red/orange, hanging down) — 2x scale for visibility
+    reduction_db = max(0, db_val - db_after) * 2;
+    bar_h = (reduction_db / db_rng) * spec_h;
+    bar_h = min(bar_h, spec_h);
+    bar_h > 0.5 ? (
+      gfx_r = 0.85; gfx_g = 0.30; gfx_b = 0.12; gfx_a = 0.65;
+      gfx_rect(gx, spec_y, 1, bar_h);
+    );
+
+    col += step;
+  );
+
+  // Frequency labels
+  gfx_setfont(1, "Arial", 8);
+  gfx_r = 0.35; gfx_g = 0.38; gfx_b = 0.42;
+  freq_label = 62.5;
+  while (freq_label < nyq) (
+    gx = spec_x + log(freq_label / freq_min) / log_scl * spec_w;
+    gx > spec_x && gx < spec_x + spec_w - 20 ? (
+      gfx_x = gx - 8; gfx_y = spec_bot + 2;
+      freq_label >= 1000 ? (
+        gfx_drawnumber(freq_label / 1000, 1); gfx_drawstr("k");
+      ) : gfx_drawnumber(freq_label, 0);
+    );
+    freq_label *= 2;
+  );
+
+  // Filter overlay (HP, LP, Bell)
+  gfx_setfont(1, "Arial", 8);
+  hover_hp = abs(mouse_x - mx_hp) < 25;
+  hover_lp = abs(mouse_x - mx_lp) < 25;
+  hover_bell = sqrt((mouse_x - mx_bell)^2 + (mouse_y - my_bell)^2) < 30;
+
+  // HP line and handle
+  gx = mx_hp;
+  gfx_r = 0.15 + hover_hp * 0.40; gfx_g = 0.60 + hover_hp * 0.20; gfx_b = 0.90; gfx_a = 0.50 + hover_hp * 0.30;
+  gfx_x = gx; gfx_y = spec_y + 8; gfx_lineto(gx, spec_bot, 0);
+  gfx_rect(gx - 4 - hover_hp * 2, spec_y - hover_hp * 2, 8 + hover_hp * 4, 8 + hover_hp * 4);
+  gfx_r = 0.60; gfx_g = 0.85; gfx_b = 1; gfx_a = 1;
+  gfx_x = gx + 8; gfx_y = spec_y + 1; gfx_drawstr("HP");
+  hp_hz >= 1000 ? (
+    gfx_x = gx + 24; gfx_y = spec_y + 1; gfx_drawnumber(hp_hz * 0.001, 2); gfx_drawstr("k");
+  ) : (gfx_x = gx + 24; gfx_y = spec_y + 1; gfx_drawnumber(hp_hz, 0));
+
+  // LP line and handle
+  gx = mx_lp;
+  gfx_r = 0.90 + hover_lp * 0.10; gfx_g = 0.45 + hover_lp * 0.30; gfx_b = 0.15; gfx_a = 0.50 + hover_lp * 0.30;
+  gfx_x = gx; gfx_y = spec_y + 8; gfx_lineto(gx, spec_bot, 0);
+  gfx_rect(gx - 4 - hover_lp * 2, spec_y - hover_lp * 2, 8 + hover_lp * 4, 8 + hover_lp * 4);
+  gfx_r = 1; gfx_g = 0.75; gfx_b = 0.50; gfx_a = 1;
+  gfx_x = gx + 8; gfx_y = spec_y + 1; gfx_drawstr("LP");
+  lp_hz >= 1000 ? (
+    gfx_x = gx + 24; gfx_y = spec_y + 1; gfx_drawnumber(lp_hz * 0.001, 1); gfx_drawstr("k");
+  ) : (gfx_x = gx + 24; gfx_y = spec_y + 1; gfx_drawnumber(lp_hz, 0));
+
+  // Bell marker and curve
+  gx = mx_bell;
+  bell_y = max(spec_y + 4, min(spec_bot - 4, my_bell));
+  gfx_r = 0.95 + hover_bell * 0.05; gfx_g = 0.85 + hover_bell * 0.15; gfx_b = 0.15; gfx_a = 0.50 + hover_bell * 0.30;
+  gfx_x = gx; gfx_y = spec_y + 8; gfx_lineto(gx, spec_bot, 0);
+  gfx_a = 0.70 + hover_bell * 0.30;
+  gfx_rect(gx - 5 - hover_bell * 2, bell_y - 5 - hover_bell * 2, 10 + hover_bell * 4, 10 + hover_bell * 4);
+  gfx_r = 1; gfx_g = 1; gfx_b = 0.40; gfx_a = 1;
+  gfx_x = gx + 8; gfx_y = spec_y + 1; gfx_drawstr("Bell");
+  bell_hz >= 1000 ? (
+    gfx_x = gx + 30; gfx_y = spec_y + 1; gfx_drawnumber(bell_hz * 0.001, 2); gfx_drawstr("k");
+  ) : (gfx_x = gx + 30; gfx_y = spec_y + 1; gfx_drawnumber(bell_hz, 0));
+  gfx_x = gx + 30; gfx_y = spec_y + 10; gfx_drawnumber(bell_gain_db, 1); gfx_drawstr("dB");
+
+  // Footer diagnostics
+  gfx_setfont(1, "Arial", 9);
+  gfx_r = 0.58; gfx_g = 0.66; gfx_b = 0.72;
+  gfx_x = 12;  gfx_y = spec_bot + 16;
+  gfx_drawstr("Transient: "); gfx_drawnumber(transient_amount * 100, 0); gfx_drawstr("%");
+
+  gfx_x = 130;  gfx_y = spec_bot + 16;
+  gfx_drawstr("Ceil: "); gfx_drawnumber(ceiling_db, 1); gfx_drawstr(" dB");
+
+  gfx_x = 230;  gfx_y = spec_bot + 16;
+  clip_active ? (
+    gfx_r = 1; gfx_g = 0.3; gfx_b = 0.3;
+    gfx_drawstr("CLIP");
+    gfx_r = 0.58; gfx_g = 0.66; gfx_b = 0.72;
+  ) : gfx_drawstr("Clip: ok");
+
+  gfx_x = 310;  gfx_y = spec_bot + 16;
+  gfx_drawstr("Det: "); gfx_drawnumber(detector_peak_excess, 2);
+  gfx_drawstr("x @ "); gfx_drawnumber(bin_freq[detector_peak_bin], 0);
+
+  gfx_x = 470;  gfx_y = spec_bot + 16;
+  gfx_drawstr("Thresh: "); gfx_drawnumber(threshold_peak_over, 3);
+
+  gfx_x = 580;  gfx_y = spec_bot + 16;
+  gfx_drawstr("GR: "); gfx_drawnumber(gr_peak_db, 1); gfx_drawstr(" dB");
+
+  gfx_x = 12; gfx_y = spec_bot + 26;
+  gfx_drawstr("Mouse: "); gfx_drawnumber(mouse_x, 0);
+  gfx_drawstr(","); gfx_drawnumber(mouse_y, 0);
+  gfx_drawstr(" cap:"); gfx_drawnumber(mouse_cap, 0);
+
+  // Persist canvas filter state to gmem (survives bypass/transport within session)
+  last_mb == 1 && mouse_cap & 1 == 0 ? (
+    gmem[0] = 12345;
+    gmem[1] = hp_hz;
+    gmem[2] = lp_hz;
+    gmem[3] = bell_hz;
+    gmem[4] = bell_gain_db;
+    gmem[5] = bell_q;
+  );
+  last_mb = mouse_cap & 1;

@@ -1,0 +1,381 @@
+desc:Lozengrad Trafo
+//tags: distortion saturation transformer analysis scope
+//author: Lozengrad
+
+slider1:0.5<0.01,1.0,0.01>Sensitivity
+slider2:0.5<0.1,20,0.1>Attack (ms)
+slider3:80<10,500,1>Release (ms)
+slider4:3.0<0.5,8.0,0.1>Nickel Drive
+slider5:4.5<0.5,10.0,0.1>Iron Drive
+slider6:1.0<0.3,3.0,0.1>Morph Curve
+slider7:0.0<-18.0,18.0,0.1>Output Gain (dB)
+slider8:1<0,1,1{Off,On}>Clip (0 dBFS)
+slider9:0<0,1,1{Off,On}>Auto Gain
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+// ADAA Antiderivatives (inlined to avoid EEL2 function scope issues)
+// F_Nickel(x) = x^2/2 + 0.05x^3 - 0.0825x^4
+// F_Iron(x)   = x^2/2 - 0.0555x^4
+
+@init
+  ext_noinit = 1;
+  ext_nodenorm = 1;
+  gfx_ext_retina = 1;
+
+  // Buffer (32768 samples ≈ 680ms at 48kHz for slower scroll)
+  g_scope_n = 48000;
+  g_scope_stride = 4;
+  g_wp = 0;
+
+  // Envelope follower
+  g_att_ms = slider2;
+  g_rel_ms = slider3;
+  g_smooth_ms = 1.0; // fast smoothing for clean transient/sustain separation
+  g_hyst_freq = 250.0;
+  g_hyst_fb = 0.3;
+  g_nickel_gain = 1.5; // makeup gain so nickel is audible against iron's hysteresis boost
+  g_out_gain = 1.0;
+  g_clip = 0;
+  g_autogain = 0;
+
+  // Auto gain state
+  g_ag_in_env = 0.0;
+  g_ag_out_env = 0.0;
+  g_ag_gain = 1.0;
+
+  // Transient envelope (extended release for wider transient window)
+  g_wn_env = 0.0;
+  g_wi_env = 1.0;
+  g_wn_rel = exp(-1.0 / (0.042 * srate)); // ~42ms release
+
+  g_env = 0.0;
+  g_cv_raw = 0.0;
+  g_cv_smooth = 0.0;
+  g_cv_prev = 0.0;
+
+  // Hysteresis state
+  g_hyst_L = 0.0;
+  g_hyst_R = 0.0;
+
+  // ADAA state
+  g_x1_N_L = 0.0; g_x1_N_R = 0.0;
+  g_F1_N_L = 0.0; g_F1_N_R = 0.0;
+  g_x1_I_L = 0.0; g_x1_I_R = 0.0;
+  g_F1_I_L = 0.0; g_F1_I_R = 0.0;
+
+  g_old_w = 0;
+  g_old_h = 0;
+
+  // Pre-calculate coefficients
+  g_att_c = exp(-1.0 / (g_att_ms * srate * 0.001));
+  g_rel_c = exp(-1.0 / (g_rel_ms * srate * 0.001));
+  g_smooth_c = exp(-1.0 / (g_smooth_ms * srate * 0.001));
+  g_hyst_c = exp(-2.0 * $pi * g_hyst_freq / srate);
+
+  // Fast envelope for transient detection (instant attack, 10ms release)
+  g_fast_env = 0.0;
+  g_fast_env_prev = 0.0;
+  g_fast_rel_c = exp(-1.0 / (0.010 * srate));
+
+  // Init circular buffer
+  i = 0;
+  loop(g_scope_n * g_scope_stride,
+    g_scope[i] = 0.0;
+    i = i + 1;
+  );
+
+@slider
+  g_thresh = slider1;
+  g_att_ms = slider2;
+  g_rel_ms = slider3;
+  g_drv_n = slider4;
+  g_drv_i = slider5;
+  g_morph_c = slider6;
+  g_out_gain = 10 ^ (slider7 / 20.0);
+  g_clip = slider8;
+  g_autogain = slider9;
+
+  g_att_c = exp(-1.0 / (g_att_ms * srate * 0.001));
+  g_rel_c = exp(-1.0 / (g_rel_ms * srate * 0.001));
+  g_smooth_c = exp(-1.0 / (g_smooth_ms * srate * 0.001));
+  g_hyst_c = exp(-2.0 * $pi * g_hyst_freq / srate);
+  g_wn_rel = exp(-1.0 / (0.042 * srate)); // ~42ms release for transient envelope
+  g_fast_rel_c = exp(-1.0 / (0.010 * srate)); // 10ms release for fast transient detection
+
+@sample
+  // --- INPUT RMS TRACKING (for Auto Gain) ---
+  in_abs = abs((spl0 + spl1) * 0.5);
+  g_ag_in_env = 0.9995 * g_ag_in_env + 0.0005 * in_abs;
+
+  in_abs > g_env ? (
+    g_env = g_att_c * g_env + (1.0 - g_att_c) * in_abs;
+  ) : (
+    g_env = g_rel_c * g_env + (1.0 - g_rel_c) * in_abs;
+  );
+
+  g_cv_raw = min(g_env / max(1.0 - g_thresh * 0.999, 0.001), 1.0); // inverted: higher sensitivity = lower threshold = easier CV
+  g_cv_smooth = g_smooth_c * g_cv_smooth + (1.0 - g_smooth_c) * g_cv_raw;
+  g_cv = max(min(g_cv_smooth, 1.0), 0.0);
+  // Fast envelope for transient detection (instant attack, 10ms release)
+  // Separate from the user's attack/release so fast double kicks always trigger
+  // Sensitivity gates the fast envelope noise floor and scales derivative detection
+  sens_noise = 0.01 - g_thresh * 0.0095; // 0.01 at min sens → 0.0005 at max sens
+  in_abs > g_fast_env && in_abs > sens_noise ? g_fast_env = in_abs : g_fast_env = g_fast_env * g_fast_rel_c + in_abs * (1.0 - g_fast_rel_c);
+  // Derivative multiplier depends on Sensitivity: higher = easier Nickel trigger
+  cv_diff = g_fast_env - g_fast_env_prev;
+  g_fast_env_prev = g_fast_env;
+  cv_rate = max(min(cv_diff * (5.0 + g_thresh * 15.0), 1.0), 0.0);
+
+  // --- NICKEL PATH (Asymmetric, ADAA) ---
+  xn_L = max(min(spl0 * g_drv_n, 1.5), -1.5);
+  F0_N_L = (0.5 * xn_L * xn_L) + (0.05 * xn_L * xn_L * xn_L) - (0.0825 * xn_L * xn_L * xn_L * xn_L);
+  abs(xn_L - g_x1_N_L) > 0.0001 ? (
+    out_N_L = (F0_N_L - g_F1_N_L) / (xn_L - g_x1_N_L);
+  ) : (
+    out_N_L = xn_L + 0.15 * (xn_L * xn_L) - 0.33 * (xn_L * xn_L * xn_L);
+  );
+  out_N_L = out_N_L * g_nickel_gain;
+  g_x1_N_L = xn_L; g_F1_N_L = F0_N_L;
+
+  xn_R = max(min(spl1 * g_drv_n, 1.5), -1.5);
+  F0_N_R = (0.5 * xn_R * xn_R) + (0.05 * xn_R * xn_R * xn_R) - (0.0825 * xn_R * xn_R * xn_R * xn_R);
+  abs(xn_R - g_x1_N_R) > 0.0001 ? (
+    out_N_R = (F0_N_R - g_F1_N_R) / (xn_R - g_x1_N_R);
+  ) : (
+    out_N_R = xn_R + 0.15 * (xn_R * xn_R) - 0.33 * (xn_R * xn_R * xn_R);
+  );
+  out_N_R = out_N_R * g_nickel_gain;
+  g_x1_N_R = xn_R; g_F1_N_R = F0_N_R;
+
+  // --- IRON PATH (Hysteresis + Symmetric, ADAA) ---
+  xi_raw_L = spl0 * g_drv_i;
+  g_hyst_L = g_hyst_c * g_hyst_L + (1.0 - g_hyst_c) * xi_raw_L;
+  xi_L = max(min(xi_raw_L + g_hyst_fb * g_hyst_L, 1.5), -1.5);
+
+  F0_I_L = (0.5 * xi_L * xi_L) - (0.0555 * xi_L * xi_L * xi_L * xi_L);
+  abs(xi_L - g_x1_I_L) > 0.0001 ? (
+    out_I_L = (F0_I_L - g_F1_I_L) / (xi_L - g_x1_I_L);
+  ) : (
+    out_I_L = xi_L - 0.222 * (xi_L * xi_L * xi_L);
+  );
+  g_x1_I_L = xi_L; g_F1_I_L = F0_I_L;
+
+  xi_raw_R = spl1 * g_drv_i;
+  g_hyst_R = g_hyst_c * g_hyst_R + (1.0 - g_hyst_c) * xi_raw_R;
+  xi_R = max(min(xi_raw_R + g_hyst_fb * g_hyst_R, 1.5), -1.5);
+
+  F0_I_R = (0.5 * xi_R * xi_R) - (0.0555 * xi_R * xi_R * xi_R * xi_R);
+  abs(xi_R - g_x1_I_R) > 0.0001 ? (
+    out_I_R = (F0_I_R - g_F1_I_R) / (xi_R - g_x1_I_R);
+  ) : (
+    out_I_R = xi_R - 0.222 * (xi_R * xi_R * xi_R);
+  );
+  g_x1_I_R = xi_R; g_F1_I_R = F0_I_R;
+
+  // --- DERIVATIVE-BASED DYNAMIC MORPH ---
+  // cv_rate=0 (falling/steady) = pure iron (sustain), cv_rate>0 (rising) = nickel (transient attack)
+  cv_sharp = cv_rate < 0.05 ? 0 : cv_rate > 0.5 ? 1 : (cv_rate - 0.05) * 2.222;
+  morph_cv = pow(cv_sharp, 1.0 / g_morph_c);
+  w_n_raw = sqrt(morph_cv);
+  w_i_raw = sqrt(1.0 - morph_cv);
+  // Release envelope on both weights so they crossfade smoothly
+  w_n_raw > g_wn_env ? (
+    g_wn_env = w_n_raw;
+  ) : (
+    g_wn_env = g_wn_env * g_wn_rel + w_n_raw * (1.0 - g_wn_rel);
+  );
+  w_i_raw < g_wi_env ? (
+    g_wi_env = w_i_raw;
+  ) : (
+    g_wi_env = g_wi_env * g_wn_rel + w_i_raw * (1.0 - g_wn_rel);
+  );
+  w_n = g_wn_env;
+  w_i = g_wi_env;
+  // Normalize so blend sums to unity
+  total_w = w_n + w_i;
+  total_w > 0.001 ? (
+    w_n /= total_w;
+    w_i /= total_w;
+  );
+
+  morph_L = out_N_L * w_n + out_I_L * w_i;
+  morph_R = out_N_R * w_n + out_I_R * w_i;
+
+  // --- AUTO GAIN ---
+  out_abs = (abs(morph_L) + abs(morph_R)) * 0.5;
+  g_ag_out_env = 0.9995 * g_ag_out_env + 0.0005 * out_abs;
+  g_autogain ? (
+    in_lev = max(g_ag_in_env, 0.00001);
+    out_lev = max(g_ag_out_env, 0.00001);
+    target = in_lev / out_lev;
+    target = max(0.25, min(4.0, target));
+    g_ag_gain = 0.9999 * g_ag_gain + 0.0001 * target;
+    spl0 = morph_L * g_ag_gain;
+    spl1 = morph_R * g_ag_gain;
+  ) : (
+    g_ag_gain = 1.0;
+    spl0 = morph_L;
+    spl1 = morph_R;
+  );
+
+  // --- OUTPUT GAIN ---
+  spl0 *= g_out_gain;
+  spl1 *= g_out_gain;
+
+  // --- CLIP (0 dBFS) ---
+  g_clip ? (
+    spl0 = max(-1.0, min(1.0, spl0));
+    spl1 = max(-1.0, min(1.0, spl1));
+  );
+
+  // --- WRITE TO CIRCULAR BUFFER ---
+  // Stored: [L, R, hue (0=iron/orange…1=nickel/cyan), activity (0=white…1=full color)]
+  color_hue     = w_n;
+  cv_boost      = 0.0 + 1.0 * g_cv;
+  nickel_sat    = min(abs(out_N_L) * 0.5, 1.0);
+  iron_sat      = min(abs(out_I_L) * 0.5, 1.0);
+  active_sat    = w_n * nickel_sat + w_i * iron_sat;
+  color_activity = min(active_sat * 2.0 * cv_boost, 1.0);
+  pos = g_wp * g_scope_stride;
+  g_scope[pos] = spl0;
+  g_scope[pos + 1] = spl1;
+  g_scope[pos + 2] = color_hue;
+  g_scope[pos + 3] = color_activity;
+  g_wp = g_wp + 1;
+  g_wp >= g_scope_n ? g_wp = 0;
+
+@gfx 800 400
+  gfx_r = 0; gfx_g = 0; gfx_b = 0; gfx_a = 1;
+  gfx_x = 0; gfx_y = 0;
+  gfx_rectto(gfx_w, gfx_h);
+
+  // Margins
+  margin_top = 30;
+  margin_bot = 10;
+  scope_h = gfx_h - margin_top - margin_bot;
+  scope_y0 = margin_top;
+  scope_yc = scope_y0 + scope_h * 0.5;
+
+  // Scale factor for display (leave headroom)
+  scale = (scope_h * 0.5) * 0.85;
+
+  // Grid
+  gfx_a = 0.15;
+  gfx_r = 0.6; gfx_g = 0.6; gfx_b = 0.6;
+  gfx_line(0, scope_yc, gfx_w, scope_yc);
+  gfx_a = 0.08;
+  gfx_line(0, scope_y0, gfx_w, scope_y0);
+  gfx_line(0, scope_y0 + scope_h, gfx_w, scope_y0 + scope_h);
+
+  // Vertical grid
+  gfx_a = 0.06;
+  n_div = 8;
+  i = 1;
+  loop(n_div - 1,
+    gfx_line(gfx_w * i / n_div, scope_y0, gfx_w * i / n_div, scope_y0 + scope_h);
+    i = i + 1;
+  );
+
+  // --- SCOPE DRAWING ---
+  view_n = g_scope_n;
+  rd = g_wp - view_n;
+  rd < 0 ? rd = rd + g_scope_n;
+
+  // Pre-calculate pixel mapping
+  ppf = gfx_w / view_n;
+
+  // State for current pixel column
+  cur_pix = -1;
+  pix_min_L = 0; pix_max_L = 0;
+  pix_min_R = 0; pix_max_R = 0;
+  pix_hue = 0.5; // 0=iron(orange) → 0.5=white → 1=nickel(cyan)
+  pix_act = 0;   // vibrancy: 0=white, 1=full color
+
+  i = 0;
+  loop(view_n,
+    idx = rd * g_scope_stride;
+    v_L = g_scope[idx];
+    v_R = g_scope[idx + 1];
+    v_hue = g_scope[idx + 2];
+    v_act = g_scope[idx + 3];
+
+    p = floor(i * ppf);
+
+    p != cur_pix ? (
+      cur_pix >= 0 ? (
+        // hue: 0=orange, 1=cyan (binary snap, no transition), activity: 0=white…1=full color
+        pix_hue > 0.5 ? (tr = 0.0; tg = 0.9; tb = 1.0;) : (tr = 1.0; tg = 0.4; tb = 0.0;);
+        gfx_r = 1.0 + pix_act * (tr - 1.0);
+        gfx_g = 1.0 + pix_act * (tg - 1.0);
+        gfx_b = 1.0 + pix_act * (tb - 1.0);
+        gfx_a = 0.85;
+
+        y1_L = floor(scope_yc - pix_max_L * scale);
+        y2_L = floor(scope_yc - pix_min_L * scale);
+        y1_R = floor(scope_yc - pix_max_R * scale);
+        y2_R = floor(scope_yc - pix_min_R * scale);
+
+        // Draw L channel
+        gfx_a = 0.85;
+        gfx_line(cur_pix, y1_L, cur_pix, y2_L);
+
+        // Draw R channel (slightly dimmer, offset by 1 pixel right)
+        gfx_a = 0.55;
+        gfx_line(cur_pix + 1, y1_R, cur_pix + 1, y2_R);
+      );
+
+      cur_pix = p;
+      pix_min_L = v_L; pix_max_L = v_L;
+      pix_min_R = v_R; pix_max_R = v_R;
+      pix_hue = v_hue; pix_act = v_act;
+    ) : (
+      pix_min_L = min(pix_min_L, v_L);
+      pix_max_L = max(pix_max_L, v_L);
+      pix_min_R = min(pix_min_R, v_R);
+      pix_max_R = max(pix_max_R, v_R);
+      pix_hue = max(pix_hue, v_hue);
+      pix_act = max(pix_act, v_act);
+    );
+
+    rd = rd + 1;
+    rd >= g_scope_n ? rd = 0;
+    i = i + 1;
+  );
+
+  // Last pixel column
+  cur_pix >= 0 ? (
+    pix_hue > 0.5 ? (tr = 0.0; tg = 0.9; tb = 1.0;) : (tr = 1.0; tg = 0.4; tb = 0.0;);
+    gfx_r = 1.0 + pix_act * (tr - 1.0);
+    gfx_g = 1.0 + pix_act * (tg - 1.0);
+    gfx_b = 1.0 + pix_act * (tb - 1.0);
+    gfx_a = 0.85;
+
+    y1_L = floor(scope_yc - pix_max_L * scale);
+    y2_L = floor(scope_yc - pix_min_L * scale);
+    gfx_line(cur_pix, y1_L, cur_pix, y2_L);
+
+    gfx_a = 0.55;
+    y1_R = floor(scope_yc - pix_max_R * scale);
+    y2_R = floor(scope_yc - pix_min_R * scale);
+    gfx_line(cur_pix + 1, y1_R, cur_pix + 1, y2_R);
+  );
+
+  // --- HUD ---
+  gfx_setfont(1, "Consolas", 11 * gfx_ext_retina);
+  gfx_a = 0.7;
+  gfx_r = 0.8; gfx_g = 0.8; gfx_b = 0.8;
+  gfx_x = 6; gfx_y = 3;
+  sprintf(#hud, "N %.1f | I %.1f | S %.2f | A %.1f | R %.0f | M %.1f | G %+.1f | CV %.2f | Clip:%s | AG:%s",
+    g_drv_n, g_drv_i, g_thresh, g_att_ms, g_rel_ms, g_morph_c, slider7, g_cv,
+    g_clip ? "On" : "Off", g_autogain ? "On" : "Off");
+  gfx_drawstr(#hud);
+
+  // Top-right label
+  gfx_x = gfx_w - 6;
+  gfx_y = 3;
+  gfx_r = 0.4; gfx_g = 0.4; gfx_b = 0.4;
+  gfx_drawstr("Transformatör");

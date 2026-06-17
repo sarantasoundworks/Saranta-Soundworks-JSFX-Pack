@@ -1,0 +1,346 @@
+desc:Lozengrad MicroDelay (Saranta Soundworks)
+//tags: effect stereo delay modulation width depth
+//author: Saranta Soundworks
+//
+// Procedural Micro-Delay & Modulation Engine
+// Psychoacoustic Width/Depth — Organic Modulation Engine
+//
+// Architecture:
+//   Input -> M/S Encode -> Mackey-Glass Modulation -> Hybrid Interpolation ->
+//   Phase Alignment (optional) -> Anti-Alias LPF -> M/S Decode -> Output
+//
+// Hybrid Interpolation:
+//   < 10ms: 3rd-Order Lagrange (HF preservation at short delays)
+//   >=10ms: 1st-Order Thiran All-Pass (CPU efficiency, flat group delay)
+//
+// Modulation:
+//   Discretized Mackey-Glass DDE (deterministic chaos) + 1-pole LPF shaping
+//   Avoids periodic LFO artifacts and "sea-sickness"
+
+slider1:70<0,100,0.1>Width/Depth (%)
+slider2:18<5,35,0.5>Base Delay (ms)
+slider3:50<0,100,0.1>Mod Rate (%)
+slider4:50<0,100,0.1>Mod Depth (%)
+slider5:0<0,1,1{Live,HQ}>Mode
+slider6:65<0,100,0.1>Mix (%)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+  ext_nodenorm = 1;
+  EPS = 0.000000000000000000000000000001;
+
+  // === Buffer Configuration (power of 2 for bitwise AND wrap) ===
+  sbuf_size = 8192;
+  sbuf_mask = sbuf_size - 1;
+
+  // === Mackey-Glass Configuration ===
+  mg_len = 64;
+  mg_mask = mg_len - 1;
+
+  // === Constants ===
+  C1_6 = 1/6;
+  C1_3 = 1/3;
+  C1_2 = 0.5;
+
+  // === Zero-fill Side Channel Delay Buffer ===
+  i = 0;
+  loop(sbuf_size,
+    sbuf[i] = 0;
+    i += 1;
+  );
+  wpos = 0;
+
+  // === Initialize MG History Buffer ===
+  i = 0;
+  loop(mg_len,
+    mg_buf[i] = 0.1 + 0.001 * i;
+    i += 1;
+  );
+  mg_pos = 0;
+
+  // === Initialize State Variables ===
+  mg_smooth = 0;
+  mg_rms = 0.5;
+  mg_norm_scale = 1.0;
+
+  thiran_x1 = 0;
+  thiran_y1 = 0;
+
+  hq_y1 = 0;
+  hq_x1 = 0;
+
+  aa_l = 0;
+  aa_r = 0;
+
+  // === Mode Transition Tracking ===
+  last_thiran = 0;
+
+  // === Fade-in ===
+  fade_samples = 0;
+  fade_len = 0;
+
+  // === Sample Rate Guard ===
+  srate = srate > 0 ? srate : 48000;
+
+  // === Parameter cache ===
+  p_width = 0.7;
+  p_base_delay_ms = 18;
+  p_mod_rate = 0.5;
+  p_mod_depth = 0.5;
+  p_mode = 0;
+  p_mix = 0.65;
+  update_flag = 1;
+
+  // === Precomputed MG Parameters ===
+  mg_alpha = 0.15;
+  mg_beta = 0.5;
+  mg_d = 20;
+  mg_lpf_coeff = 0.999;
+
+  // === Delay Bounds ===
+  min_delay_samps = 5 * srate / 1000;
+  max_delay_samps = 35 * srate / 1000;
+  hybrid_thresh = 10 * srate / 1000;
+
+  // === AA LPF ===
+  aa_lpf_coeff = 0.5;
+
+@slider
+  update_flag = 1;
+
+@block
+  update_flag ? (
+    update_flag = 0;
+
+    // === Parameter Mapping ===
+    p_width = slider1 * 0.01;
+    p_base_delay_ms = slider2;
+    p_mod_rate = slider3 * 0.01;
+    p_mod_depth = slider4 * 0.01;
+    p_mode = slider5;
+    p_mix = slider6 * 0.01;
+
+    // === Mackey-Glass Parameter Computation ===
+    // Mod Rate maps to MG dynamics + LPF cutoff
+    // Higher rate = faster/chaotic, lower = smooth/drift
+    mg_alpha = 0.30 - p_mod_rate * 0.22;
+    mg_beta = 0.20 + p_mod_rate * 0.60;
+    mg_d = 10 + floor(p_mod_rate * 20);
+    mg_d = max(2, min(mg_len - 1, mg_d));
+
+    // MG smoothing LPF cutoff: 0.5Hz (drift) to 8Hz (modulation wobble)
+    mg_lpf_freq = 0.5 + p_mod_rate * 7.5;
+    mg_lpf_coeff = exp(-2 * $pi * mg_lpf_freq / srate);
+
+    // === Delay Bounds (precomputed for @sample) ===
+    min_delay_samps = 5 * srate / 1000;
+    max_delay_samps = 35 * srate / 1000;
+    hybrid_thresh = 10 * srate / 1000;
+    base_delay_samps = p_base_delay_ms * srate / 1000;
+    mod_range_samps = p_mod_depth * (max_delay_samps - min_delay_samps) * 0.5;
+
+    // === Anti-Aliasing LPF (gentle, ~35% of Nyquist) ===
+    aa_cutoff = min(srate * 0.33, 16000);
+    aa_lpf_coeff = exp(-2 * $pi * aa_cutoff / srate);
+
+    // === Fade-in Length (10ms at current sample rate) ===
+    fade_len = floor(0.010 * srate);
+    fade_samples = 0;
+
+  );
+
+@sample
+  // ================================================================
+  // STEP 1: Mid/Side Encoding
+  // M = L + R,  S = L - R
+  // (Decoder: L = (M+S)/2, R = (M-S)/2 -> unity gain at no processing)
+  // ================================================================
+  m = spl0 + spl1;
+  s = spl0 - spl1;
+
+  // Preserve original side for dry/widening blend
+  s_orig = s;
+
+  // ================================================================
+  // STEP 2: Procedural Modulation Generation
+  // Discretized Mackey-Glass Delay Differential Equation
+  //   x[n] = x[n-d] * (beta / (1 + x[n-d]^gamma)) - alpha * x[n]
+  // Rearranged for explicit computation:
+  //   x[n] = x[n-d] * beta / ((1 + x[n-d]^gamma) * (1 + alpha))
+  // + 1-pole LPF for sub-audio bandlimiting
+  // ================================================================
+
+  // Read delayed MG sample from circular history buffer
+  mg_rd = (mg_pos - mg_d + mg_len) & mg_mask;
+  mg_xd = mg_buf[mg_rd];
+
+  // Compute x^gamma (gamma = 10) using repeated squaring
+  // x^10 = ((x^2)^2)^2 * x^2
+  mg_x2 = mg_xd * mg_xd;
+  mg_x4 = mg_x2 * mg_x2;
+  mg_x8 = mg_x4 * mg_x4;
+  mg_x10 = mg_x8 * mg_x2;
+
+  // Mackey-Glass Difference Equation (stable, explicit form)
+  mg_denom = 1 + mg_x10;
+  mg_raw = mg_xd * mg_beta / (mg_denom * (1 + mg_alpha));
+
+  // Store new value in history, advance write pointer
+  mg_buf[mg_pos] = mg_raw;
+  mg_pos = (mg_pos + 1) & mg_mask;
+
+  // 1-pole LPF Smoothing (bandlimit to sub-audio range)
+  mg_smooth = mg_lpf_coeff * mg_smooth + (1 - mg_lpf_coeff) * mg_raw;
+
+  // Adaptive normalization: track RMS of smoothed MG output
+  mg_rms += (abs(mg_smooth) - mg_rms) * 0.0005;
+  mg_norm_scale = mg_rms > 0.01 ? 0.5 / (mg_rms + 0.001) : 0.5;
+
+  // Normalized modulation signal, approximately [-1, 1]
+  mod_signal = (mg_smooth - 0.75) * mg_norm_scale * 2.0;
+  mod_signal = max(-1, min(1, mod_signal));
+
+  // ================================================================
+  // STEP 3: Total Delay Calculation
+  // ================================================================
+
+  mod_samps = mod_signal * mod_range_samps;
+  total_delay_raw = base_delay_samps + mod_samps;
+  total_delay = max(min_delay_samps, min(max_delay_samps, total_delay_raw));
+
+  // Separate integer and fractional parts
+  int_delay = floor(total_delay);
+  frac = total_delay - int_delay;
+
+  // ================================================================
+  // STEP 4: Side Channel Processing — Write to Buffer
+  // ================================================================
+  sbuf[wpos] = s;
+
+  // Safe read position (always positive due to +sbuf_size)
+  read_pos = (wpos - int_delay + sbuf_size) & sbuf_mask;
+
+  // ================================================================
+  // STEP 4b: Hybrid Interpolation
+  // < 10ms: 3rd-Order Lagrange (stateless, precision)
+  // >=10ms: 1st-Order Thiran All-Pass (stateful, efficiency)
+  // ================================================================
+
+  // Determine regime
+  // Lagrange used when int_delay < hybrid_thresh or < 2 samples
+  use_lagrange = (int_delay < hybrid_thresh || int_delay < 2) ? 1 : 0;
+
+  // Detect Thiran mode transition to reset filter state
+  use_lagrange ? (
+    // === 3rd-Order Lagrange Interpolator ===
+    // 4 sample points centered on the interpolation interval
+    idx0 = (wpos - int_delay - 2 + sbuf_size + sbuf_size) & sbuf_mask;
+    idx1 = (wpos - int_delay - 1 + sbuf_size + sbuf_size) & sbuf_mask;
+    idx2 = read_pos;
+    idx3 = (read_pos + 1) & sbuf_mask;
+
+    x0 = sbuf[idx0];
+    x1 = sbuf[idx1];
+    x2 = sbuf[idx2];
+    x3 = sbuf[idx3];
+
+    // Horner-form 3rd-order Lagrange at fractional offset f in [0,1)
+    f = frac;
+    c3 = -x0*C1_6 + x1*C1_2 - x2*C1_2 + x3*C1_6;
+    c2 = x0*C1_2 - x1 + x2*C1_2;
+    c1 = -x0*C1_3 - x1*C1_2 + x2 - x3*C1_6;
+    s_delayed = ((c3*f + c2)*f + c1)*f + x1;
+
+  ) : (
+    // === 1st-Order Thiran All-Pass Filter ===
+    // H(z) = (a + z^(-1)) / (1 + a*z^(-1))
+    // a = (1 - frac) / (1 + frac), group delay at DC = frac
+    // y[n] = a*x[n] + x[n-1] - a*y[n-1]
+
+    s_curr = sbuf[read_pos];
+
+    // Reset Thiran state on first sample after switching from Lagrange
+    last_thiran == 0 ? (
+      thiran_x1 = s_curr;
+      thiran_y1 = s_curr;
+    );
+    last_thiran = 1;
+
+    a = (1 - frac) / (1 + frac + EPS);
+    s_delayed = a * s_curr + thiran_x1 - a * thiran_y1;
+
+    thiran_x1 = s_curr;
+    thiran_y1 = s_delayed;
+  );
+  last_thiran = use_lagrange ? 0 : last_thiran;
+
+  // ================================================================
+  // STEP 5: Phase Alignment — Mid Channel Compensation
+  // Live Mode (default, zero latency): rely on Haas effect
+  // HQ Mode: Thiran all-pass on Mid channel for group delay matching
+  // ================================================================
+
+  p_mode ? (
+    // HQ Mode: apply compensatory Thiran to Mid channel
+    // Using the same fractional delay as the Side path
+    hq_a = (1 - frac) / (1 + frac + EPS);
+    m_proc = hq_a * m + hq_x1 - hq_a * hq_y1;
+    hq_x1 = m;
+    hq_y1 = m_proc;
+  ) : (
+    m_proc = m;
+    // Still track previous Mid sample for seamless mode switching
+    hq_x1 = m;
+    hq_y1 = m;
+  );
+
+  // ================================================================
+  // STEP 6: Width / Mix Blending
+  // ================================================================
+
+  // Add processed side on top of original (x2 gain for pronounced effect)
+  // p_width=0: bypass, p_width=50: unity delayed side, p_width=100: 2x delayed side
+  s_blend = s_orig + s_delayed * p_width * 2.0;
+
+  // ================================================================
+  // STEP 7: Mid/Side Decoding
+  // L = (M + S) / 2,  R = (M - S) / 2
+  // ================================================================
+  l_out = (m_proc + s_blend) * 0.5;
+  r_out = (m_proc - s_blend) * 0.5;
+
+  // ================================================================
+  // STEP 8: Dry/Wet Mix
+  // ================================================================
+  l_out = (1 - p_mix) * spl0 + p_mix * l_out;
+  r_out = (1 - p_mix) * spl1 + p_mix * r_out;
+
+  // ================================================================
+  // STEP 9: Anti-Aliasing Smoothing
+  // Gentle single-pole LPF ~16kHz to tame modulation artifacts
+  // ================================================================
+  aa_l = aa_lpf_coeff * aa_l + (1 - aa_lpf_coeff) * l_out;
+  aa_r = aa_lpf_coeff * aa_r + (1 - aa_lpf_coeff) * r_out;
+
+  // ================================================================
+  // STEP 10: Fade-in (anti-click on init / parameter change)
+  // ================================================================
+  fade_samples < fade_len ? (
+    fade_gain = fade_samples / fade_len;
+    aa_l *= fade_gain;
+    aa_r *= fade_gain;
+    fade_samples += 1;
+  );
+
+  // ================================================================
+  // Output
+  // ================================================================
+  spl0 = aa_l;
+  spl1 = aa_r;
+
+  // Advance delay line write pointer
+  wpos = (wpos + 1) & sbuf_mask;
