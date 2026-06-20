@@ -1,0 +1,309 @@
+desc:Lozengrad Klip (Saranta Soundworks)
+
+slider1:0<-24,24,0.1>Input (dB)
+slider2:0<-36,0,0.1>Threshold (dB)
+slider3:0<-24,24,0.1>Output (dB)
+slider4:0<0,3,1{Hard Clip,Soft Clip,Tube Clip,Tape Clip}>Mode
+slider5:0<0,2,1{1x,2x,4x}>Oversampling
+slider6:0.5<0,1,0.01>Harmonic Tilt
+slider7:0<0,1,0.01>Frequency Weight
+slider8:100<0,100,1>Mix (%)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+options:gfx_clear=1
+
+@init
+  ext_nodenorm = 1;
+  EPS = 0.000000000000000000000000000001;
+  db_scale = 20 / log(10);
+
+  // Half-band FIR coefficients (23-tap, odd-symmetric, DC gain = 1.0)
+  c0 = 0.500000; c1 = 0.316747;
+  c3 = -0.096726; c5 = 0.045437; c7 = -0.024227;
+  c9 = 0.013725; c11 = -0.007994; c13 = 0.004705;
+  c15 = -0.002737; c17 = 0.001533; c19 = -0.000788;
+  c21 = 0.000325;
+
+  hbf_states = 100000; mem_pos = 100000 + 400;
+  prev_os = -1;
+
+  gfx_buf_size = 600;
+  gfx_audio_buf = mem_pos; mem_pos += gfx_buf_size;
+  gfx_gr_buf = mem_pos; mem_pos += gfx_buf_size;
+  gfx_bin_total = 0;
+  gfx_sample_count = 0;
+  gfx_peak_acc = 0;
+  gfx_clip_acc = 0;
+  gfx_gr_acc = 1.0;
+  gfx_update_rate = 100;
+  gfx_gr_smooth = 0;
+  prev_in_L = 0; prev_in_R = 0;
+  prev_out_L = 0; prev_out_R = 0;
+
+function db2amp(db) ( exp(db * log(10) / 20) );
+function amp2db(amp) ( db_scale * log(max(amp, EPS)) );
+
+function process_hbf(input, state_ptr)
+  local(k)
+(
+  k = 22;
+  loop(22,
+    state_ptr[k] = state_ptr[k - 1];
+    k -= 1;
+  );
+  state_ptr[0] = input;
+
+  state_ptr[11] * c0 +
+  (state_ptr[10] + state_ptr[12]) * c1 +
+  (state_ptr[9] + state_ptr[13]) * c3 +
+  (state_ptr[8] + state_ptr[14]) * c5 +
+  (state_ptr[7] + state_ptr[15]) * c7 +
+  (state_ptr[6] + state_ptr[16]) * c9 +
+  (state_ptr[5] + state_ptr[17]) * c11 +
+  (state_ptr[4] + state_ptr[18]) * c13 +
+  (state_ptr[3] + state_ptr[19]) * c15 +
+  (state_ptr[2] + state_ptr[20]) * c17 +
+  (state_ptr[1] + state_ptr[21]) * c19 +
+  (state_ptr[0] + state_ptr[22]) * c21
+);
+
+function clip_hard(x) ( max(-1, min(1, x)) );
+function clip_soft(x) ( min(1, max(-1, x - x^3 / 3)) );
+function clip_tube(x) ( x / (1 + abs(x)) );
+function clip_tape(x) ( (2 / $pi) * atan(x * $pi / 2) );
+
+function clip_sample(x)
+(
+  mode == 0 ? clip_hard(x) :
+  mode == 1 ? clip_soft(x) :
+  mode == 2 ? clip_tube(x) :
+  clip_tape(x);
+);
+
+function clip_tilt(x)
+  local(t, bias, sat, r)
+(
+  t = tilt;
+  bias = (1 - t) * 0.25;
+  sat = (1 - t)^2 * 0.6;
+
+  r = x + sat * x^3;
+  r = r + bias;
+  r = clip_sample(r);
+  r / (1 + sat * 0.3 + abs(bias) * 0.3);
+);
+
+@slider
+  input_gain = 10 ^ (slider1 / 20);
+  threshold = 10 ^ (slider2 / 20);
+  output_gain = 10 ^ (slider3 / 20);
+  mode = slider4;
+  os_factor = 1;
+  slider5 >= 1 ? os_factor *= 2;
+  slider5 >= 2 ? os_factor *= 2;
+
+  tilt = slider6;
+  fw_alpha = slider7 * 0.874;
+  mix = slider8 * 0.01;
+
+  slider5 != prev_os ? (
+    i = 0; loop(400, hbf_states[i] = 0; i += 1; );
+    prev_os = slider5;
+  );
+
+@block
+  fir_delay = slider5 == 1 ? 11 : slider5 == 2 ? 16 : 0;
+  pdc_delay = fir_delay;
+  pdc_bot_ch = 0;
+  pdc_top_ch = 2;
+
+@sample
+  in_L = spl0 * input_gain;
+  in_R = spl1 * input_gain;
+
+  // Pre-emphasis: boost highs, cut lows
+  pre_L = in_L - fw_alpha * prev_in_L;
+  pre_R = in_R - fw_alpha * prev_in_R;
+  prev_in_L = in_L;
+  prev_in_R = in_R;
+
+  input_peak = max(abs(in_L), abs(in_R));
+  clip_flag = input_peak > threshold ? 1 : 0;
+
+  os_mode = slider5;
+
+  os_mode == 0 ? (
+    // 1x — no oversampling
+    spl0 = pre_L / threshold;
+    spl1 = pre_R / threshold;
+    spl0 = clip_tilt(spl0);
+    spl1 = clip_tilt(spl1);
+    spl0 = spl0 * threshold;
+    spl1 = spl1 * threshold;
+  ) : os_mode == 1 ? (
+    // 2x oversampling
+    iter = 0;
+    loop(2,
+      s_in_L = iter == 0 ? pre_L * 2 : 0;
+      s_in_R = iter == 0 ? pre_R * 2 : 0;
+      cur_L = process_hbf(s_in_L, hbf_states);
+      cur_R = process_hbf(s_in_R, hbf_states + 25);
+      cur_L = cur_L / threshold;
+      cur_R = cur_R / threshold;
+      cur_L = clip_tilt(cur_L);
+      cur_R = clip_tilt(cur_R);
+      cur_L = cur_L * threshold;
+      cur_R = cur_R * threshold;
+      ds_L = process_hbf(cur_L, hbf_states + 250);
+      ds_R = process_hbf(cur_R, hbf_states + 275);
+      iter == 0 ? ( spl0 = ds_L; spl1 = ds_R; );
+      iter += 1;
+    );
+  ) : (
+    // 4x oversampling
+    i1 = 0;
+    loop(2,
+      s1_in_L = i1 == 0 ? pre_L * 2 : 0;
+      s1_in_R = i1 == 0 ? pre_R * 2 : 0;
+      s1_out_L = process_hbf(s1_in_L, hbf_states);
+      s1_out_R = process_hbf(s1_in_R, hbf_states + 25);
+      i2 = 0;
+      loop(2,
+        s2_in_L = i2 == 0 ? s1_out_L * 2 : 0;
+        s2_in_R = i2 == 0 ? s1_out_R * 2 : 0;
+        cur_L = process_hbf(s2_in_L, hbf_states + 50);
+        cur_R = process_hbf(s2_in_R, hbf_states + 75);
+        cur_L = cur_L / threshold;
+        cur_R = cur_R / threshold;
+        cur_L = clip_tilt(cur_L);
+        cur_R = clip_tilt(cur_R);
+        cur_L = cur_L * threshold;
+        cur_R = cur_R * threshold;
+        ds4_L = process_hbf(cur_L, hbf_states + 200);
+        ds4_R = process_hbf(cur_R, hbf_states + 225);
+        i2 == 0 ? ( ds2_L = ds4_L; ds2_R = ds4_R; );
+        i2 += 1;
+      );
+      ds2_L = process_hbf(ds2_L, hbf_states + 250);
+      ds2_R = process_hbf(ds2_R, hbf_states + 275);
+      i1 == 0 ? ( spl0 = ds2_L; spl1 = ds2_R; );
+      i1 += 1;
+    );
+  );
+
+  // De-emphasis: restore low frequencies
+  spl0 = spl0 + fw_alpha * prev_out_L;
+  prev_out_L = spl0;
+  spl1 = spl1 + fw_alpha * prev_out_R;
+  prev_out_R = spl1;
+  // Mix: dry (in_L) / wet (processed)
+  spl0 = in_L * (1 - mix) + spl0 * mix;
+  spl1 = in_R * (1 - mix) + spl1 * mix;
+  spl0 = spl0 * output_gain;
+  spl1 = spl1 * output_gain;
+
+  gfx_sample_count += 1;
+  gfx_peak_acc = max(gfx_peak_acc, input_peak);
+  gfx_clip_acc = max(gfx_clip_acc, clip_flag);
+  gfx_sample_count >= gfx_update_rate ? (
+    gfx_sample_count = 0;
+    gfx_audio_buf[gfx_bin_idx] = gfx_peak_acc;
+    gfx_gr_buf[gfx_bin_idx] = gfx_clip_acc;
+    gfx_bin_total += 1;
+    gfx_bin_idx += 1;
+    gfx_bin_idx >= gfx_buf_size ? gfx_bin_idx = 0 : 0;
+    gfx_peak_acc = 0;
+    gfx_clip_acc = 0;
+  );
+
+@gfx 560 400
+
+  wf_left = 10; wf_right = 550; wf_top = 10; wf_bottom = 390;
+  wf_w = wf_right - wf_left; wf_h = wf_bottom - wf_top;
+
+  gfx_set(0.03, 0.03, 0.05, 1);
+  gfx_rect(0, 0, 800, 400);
+
+  gfx_set(0.05, 0.05, 0.08, 1);
+  gfx_rect(wf_left, wf_top, wf_w, wf_h);
+
+  g0_y = wf_top;
+  g6_y = wf_bottom - (-6 + 60) / 60 * wf_h;
+  g12_y = wf_bottom - (-12 + 60) / 60 * wf_h;
+  g18_y = wf_bottom - (-18 + 60) / 60 * wf_h;
+  g24_y = wf_bottom - (-24 + 60) / 60 * wf_h;
+  g36_y = wf_bottom - (-36 + 60) / 60 * wf_h;
+  gfx_set(0.12, 0.12, 0.15, 1);
+  gfx_line(wf_left, g0_y, wf_right, g0_y);
+  gfx_line(wf_left, g6_y, wf_right, g6_y);
+  gfx_line(wf_left, g12_y, wf_right, g12_y);
+  gfx_line(wf_left, g18_y, wf_right, g18_y);
+  gfx_line(wf_left, g24_y, wf_right, g24_y);
+  gfx_line(wf_left, g36_y, wf_right, g36_y);
+  gfx_set(0.22, 0.22, 0.28, 1);
+  gfx_line(wf_left, wf_top, wf_right, wf_top);
+
+  gfx_set(0.35, 0.35, 0.38, 1);
+  gfx_x = wf_left + 1; gfx_y = wf_top - 5; gfx_printf("0");
+  gfx_x = wf_left + 1; gfx_y = g6_y - 4; gfx_printf("-6");
+  gfx_x = wf_left + 1; gfx_y = g12_y - 4; gfx_printf("-12");
+  gfx_x = wf_left + 1; gfx_y = g18_y - 4; gfx_printf("-18");
+  gfx_x = wf_left + 1; gfx_y = g24_y - 4; gfx_printf("-24");
+  gfx_x = wf_left + 1; gfx_y = g36_y - 4; gfx_printf("-36");
+
+  total_bins = min(gfx_bin_total, wf_w);
+  total_bins > 0 ? (
+    start_count = gfx_bin_total - total_bins;
+
+    i = 0;
+    loop(wf_w,
+      bo = i * total_bins / wf_w;
+      bc = start_count + bo;
+      bp = bc % gfx_buf_size;
+      a = gfx_audio_buf[bp];
+      db = max(amp2db(a + EPS), -60);
+      y_db = wf_bottom - (db + 60) / 60 * wf_h;
+      y_thr = wf_bottom - (slider2 + 60) / 60 * wf_h;
+
+      y_green = max(y_db, y_thr);
+      gfx_set(0.0, 0.8, 0.45, 0.12);
+      y_green < wf_bottom ? gfx_rect(wf_left + i - 1, y_green, 3, wf_bottom - y_green) : 0;
+
+      db > slider2 ? (
+        gfx_set(0.9, 0.06, 0.06, 0.12);
+        gfx_rect(wf_left + i - 1, y_db, 3, y_thr - y_db);
+      );
+      i += 1;
+    );
+
+    i = 0;
+    loop(wf_w,
+      bo = i * total_bins / wf_w;
+      bc = start_count + bo;
+      bp = bc % gfx_buf_size;
+      a = gfx_audio_buf[bp];
+      db = max(amp2db(a + EPS), -60);
+      y_db = wf_bottom - (db + 60) / 60 * wf_h;
+      y_thr = wf_bottom - (slider2 + 60) / 60 * wf_h;
+
+      y_green = max(y_db, y_thr);
+      gfx_set(0.0, 0.8, 0.45, 0.6);
+      y_green < wf_bottom ? gfx_rect(wf_left + i, y_green, 1, wf_bottom - y_green) : 0;
+
+      db > slider2 ? (
+        gfx_set(0.9, 0.06, 0.06, 0.6);
+        gfx_rect(wf_left + i, y_db, 1, y_thr - y_db);
+      );
+      i += 1;
+    );
+  );
+
+  gfx_set(0.15, 0.15, 0.2, 1);
+  gfx_rect(wf_left, wf_top, wf_w, 1);
+  gfx_rect(wf_left, wf_bottom - 1, wf_w, 1);
+  gfx_rect(wf_left, wf_top, 1, wf_h);
+  gfx_rect(wf_right - 1, wf_top, 1, wf_h);
