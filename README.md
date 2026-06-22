@@ -9,6 +9,7 @@ Download the latest version for free at [sarantasoundworks.com](https://sarantas
 | Plugin | Type | Description |
 |--------|------|-------------|
 | **Lozengrad Amfi** | Guitar Amp Sim | Gate, input gain, drive, 3-band EQ, 3 cabinet IR models, Mid Spice, bus compressor, master volume |
+| **Lozengrad Bas Amfi** | Bass Amp Sim | Split-band design with LR4 crossover, low channel (bass focus + saturation), high channel (pre-HPF + pre-emp + 3-stage hard clipping + auto-gain), tilt EQ, cabinet simulation, dry/wet blend, character control |
 | **Lozengrad Balans EQ** | Parametric EQ | 8-band EQ with HPF, LPF, Low Shelf, High Shelf, Bell per band. Built-in FFT spectrum analyzer with EQ curve overlay |
 | **Lozengrad EQuinox** | Tone EQ | Simple bass/treble control with Low and High frequency adjustments, FFT display |
 | **Lozengrad Feeltre** | Multi-Mode Filter | LPF, HPF, BPF, APF, Tilt EQ, Low Shelf, High Shelf, Tilt Shelf with gain control and spectrum analyzer |
@@ -50,7 +51,7 @@ JSFX is REAPER's native plugin format and won't load directly in other DAWs. How
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License — see the [LICENSE](LICENSE) file for details.
 
 ---
 
