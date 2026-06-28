@@ -1,0 +1,1881 @@
+desc:Lozengrad Amfi V2 (Saranta Soundworks)
+//author: Saranta Soundworks
+//This plugin is made possible with the help of "lyria".
+
+// Noise Gate
+slider1:0<0,1,1{Off,On}>Gate Enable
+slider2:-40<-40,0,0.1>Gate Threshold (dB)
+
+// Input Gain
+slider3:0<-24,24,0.1>Input Gain (dB)
+
+// Amp Mode
+slider4:0<0,1,1{Classic,Hard}>Amp Mode
+
+// Amp Section
+slider5:0<0,24,0.1>Drive
+
+// Tone Stack
+slider6:5<0,10,0.1>Bass
+slider7:5<0,10,0.1>Mid
+slider8:5<0,10,0.1>Treble
+
+// Power Amp Features
+slider9:30<0,100,1>Sag (%)
+slider10:50<0,100,1>Presence
+slider11:40<0,100,1>Resonance (Depth)
+
+// Master
+slider12:0<-24,24,0.1>Master Volume (dB)
+
+// Cab Selection
+slider13:0<0,3,1{Off,Cab1,Cab2,Cab3}>Cab Select
+
+// Enhancements
+slider14:1<0,2,1{Off,Low,High}>Bright Cap
+slider15:30<0,100,1>Transient Enhancer
+slider16:15<0,100,1>Harmonic Exciter
+
+in_pin:Input L
+in_pin:Input R
+out_pin:Output L
+out_pin:Output R
+
+@init
+
+pi = 3.14159265359;
+ext_tail_size = -1;
+
+// Pre-EQ biquad states
+hpf1_x1L=0; hpf1_x2L=0; hpf1_y1L=0; hpf1_y2L=0;
+hpf1_x1R=0; hpf1_x2R=0; hpf1_y1R=0; hpf1_y2R=0;
+hpf2_x1L=0; hpf2_x2L=0; hpf2_y1L=0; hpf2_y2L=0;
+hpf2_x1R=0; hpf2_x2R=0; hpf2_y1R=0; hpf2_y2R=0;
+hpf3_x1L=0; hpf3_x2L=0; hpf3_y1L=0; hpf3_y2L=0;
+hpf3_x1R=0; hpf3_x2R=0; hpf3_y1R=0; hpf3_y2R=0;
+hpf4_x1L=0; hpf4_x2L=0; hpf4_y1L=0; hpf4_y2L=0;
+hpf4_x1R=0; hpf4_x2R=0; hpf4_y1R=0; hpf4_y2R=0;
+
+pk95_x1L=0; pk95_x2L=0; pk95_y1L=0; pk95_y2L=0;
+pk95_x1R=0; pk95_x2R=0; pk95_y1R=0; pk95_y2R=0;
+
+sh108_x1L=0; sh108_x2L=0; sh108_y1L=0; sh108_y2L=0;
+sh108_x1R=0; sh108_x2R=0; sh108_y1R=0; sh108_y2R=0;
+
+pk291_x1L=0; pk291_x2L=0; pk291_y1L=0; pk291_y2L=0;
+pk291_x1R=0; pk291_x2R=0; pk291_y1R=0; pk291_y2R=0;
+
+pk120_x1L=0; pk120_x2L=0; pk120_y1L=0; pk120_y2L=0;
+pk120_x1R=0; pk120_x2R=0; pk120_y1R=0; pk120_y2R=0;
+
+pk2k_x1L=0; pk2k_x2L=0; pk2k_y1L=0; pk2k_y2L=0;
+pk2k_x1R=0; pk2k_x2R=0; pk2k_y1R=0; pk2k_y2R=0;
+
+lpf_x1L=0; lpf_x2L=0; lpf_y1L=0; lpf_y2L=0;
+lpf_x1R=0; lpf_x2R=0; lpf_y1R=0; lpf_y2R=0;
+
+// Cab1 states
+cab1_hpf1_x1L=0; cab1_hpf1_x2L=0; cab1_hpf1_y1L=0; cab1_hpf1_y2L=0;
+cab1_hpf1_x1R=0; cab1_hpf1_x2R=0; cab1_hpf1_y1R=0; cab1_hpf1_y2R=0;
+cab1_hpf2_x1L=0; cab1_hpf2_x2L=0; cab1_hpf2_y1L=0; cab1_hpf2_y2L=0;
+cab1_hpf2_x1R=0; cab1_hpf2_x2R=0; cab1_hpf2_y1R=0; cab1_hpf2_y2R=0;
+cab1_hpf3_x1L=0; cab1_hpf3_x2L=0; cab1_hpf3_y1L=0; cab1_hpf3_y2L=0;
+cab1_hpf3_x1R=0; cab1_hpf3_x2R=0; cab1_hpf3_y1R=0; cab1_hpf3_y2R=0;
+cab1_hpf4_x1L=0; cab1_hpf4_x2L=0; cab1_hpf4_y1L=0; cab1_hpf4_y2L=0;
+cab1_hpf4_x1R=0; cab1_hpf4_x2R=0; cab1_hpf4_y1R=0; cab1_hpf4_y2R=0;
+
+cab1_pk98_x1L=0; cab1_pk98_x2L=0; cab1_pk98_y1L=0; cab1_pk98_y2L=0;
+cab1_pk98_x1R=0; cab1_pk98_x2R=0; cab1_pk98_y1R=0; cab1_pk98_y2R=0;
+
+cab1_pk259_x1L=0; cab1_pk259_x2L=0; cab1_pk259_y1L=0; cab1_pk259_y2L=0;
+cab1_pk259_x1R=0; cab1_pk259_x2R=0; cab1_pk259_y1R=0; cab1_pk259_y2R=0;
+
+cab1_pk492_x1L=0; cab1_pk492_x2L=0; cab1_pk492_y1L=0; cab1_pk492_y2L=0;
+cab1_pk492_x1R=0; cab1_pk492_x2R=0; cab1_pk492_y1R=0; cab1_pk492_y2R=0;
+
+cab1_pk552_x1L=0; cab1_pk552_x2L=0; cab1_pk552_y1L=0; cab1_pk552_y2L=0;
+cab1_pk552_x1R=0; cab1_pk552_x2R=0; cab1_pk552_y1R=0; cab1_pk552_y2R=0;
+
+cab1_pk1515_x1L=0; cab1_pk1515_x2L=0; cab1_pk1515_y1L=0; cab1_pk1515_y2L=0;
+cab1_pk1515_x1R=0; cab1_pk1515_x2R=0; cab1_pk1515_y1R=0; cab1_pk1515_y2R=0;
+
+cab1_pk2446_x1L=0; cab1_pk2446_x2L=0; cab1_pk2446_y1L=0; cab1_pk2446_y2L=0;
+cab1_pk2446_x1R=0; cab1_pk2446_x2R=0; cab1_pk2446_y1R=0; cab1_pk2446_y2R=0;
+
+cab1_pk2592_x1L=0; cab1_pk2592_x2L=0; cab1_pk2592_y1L=0; cab1_pk2592_y2L=0;
+cab1_pk2592_x1R=0; cab1_pk2592_x2R=0; cab1_pk2592_y1R=0; cab1_pk2592_y2R=0;
+
+cab1_pk3390_x1L=0; cab1_pk3390_x2L=0; cab1_pk3390_y1L=0; cab1_pk3390_y2L=0;
+cab1_pk3390_x1R=0; cab1_pk3390_x2R=0; cab1_pk3390_y1R=0; cab1_pk3390_y2R=0;
+
+cab1_lpf1_x1L=0; cab1_lpf1_x2L=0; cab1_lpf1_y1L=0; cab1_lpf1_y2L=0;
+cab1_lpf1_x1R=0; cab1_lpf1_x2R=0; cab1_lpf1_y1R=0; cab1_lpf1_y2R=0;
+cab1_lpf2_x1L=0; cab1_lpf2_x2L=0; cab1_lpf2_y1L=0; cab1_lpf2_y2L=0;
+cab1_lpf2_x1R=0; cab1_lpf2_x2R=0; cab1_lpf2_y1R=0; cab1_lpf2_y2R=0;
+
+// Cab2 states
+cab2_hpf1_x1L=0; cab2_hpf1_x2L=0; cab2_hpf1_y1L=0; cab2_hpf1_y2L=0;
+cab2_hpf1_x1R=0; cab2_hpf1_x2R=0; cab2_hpf1_y1R=0; cab2_hpf1_y2R=0;
+cab2_hpf2_x1L=0; cab2_hpf2_x2L=0; cab2_hpf2_y1L=0; cab2_hpf2_y2L=0;
+cab2_hpf2_x1R=0; cab2_hpf2_x2R=0; cab2_hpf2_y1R=0; cab2_hpf2_y2R=0;
+cab2_hpf3_x1L=0; cab2_hpf3_x2L=0; cab2_hpf3_y1L=0; cab2_hpf3_y2L=0;
+cab2_hpf3_x1R=0; cab2_hpf3_x2R=0; cab2_hpf3_y1R=0; cab2_hpf3_y2R=0;
+
+cab2_pk224_x1L=0; cab2_pk224_x2L=0; cab2_pk224_y1L=0; cab2_pk224_y2L=0;
+cab2_pk224_x1R=0; cab2_pk224_x2R=0; cab2_pk224_y1R=0; cab2_pk224_y2R=0;
+
+cab2_ls428_x1L=0; cab2_ls428_x2L=0; cab2_ls428_y1L=0; cab2_ls428_y2L=0;
+cab2_ls428_x1R=0; cab2_ls428_x2R=0; cab2_ls428_y1R=0; cab2_ls428_y2R=0;
+
+cab2_pk635_x1L=0; cab2_pk635_x2L=0; cab2_pk635_y1L=0; cab2_pk635_y2L=0;
+cab2_pk635_x1R=0; cab2_pk635_x2R=0; cab2_pk635_y1R=0; cab2_pk635_y2R=0;
+
+cab2_pk1658_x1L=0; cab2_pk1658_x2L=0; cab2_pk1658_y1L=0; cab2_pk1658_y2L=0;
+cab2_pk1658_x1R=0; cab2_pk1658_x2R=0; cab2_pk1658_y1R=0; cab2_pk1658_y2R=0;
+
+cab2_pk3840_x1L=0; cab2_pk3840_x2L=0; cab2_pk3840_y1L=0; cab2_pk3840_y2L=0;
+cab2_pk3840_x1R=0; cab2_pk3840_x2R=0; cab2_pk3840_y1R=0; cab2_pk3840_y2R=0;
+
+cab2_pk8500_x1L=0; cab2_pk8500_x2L=0; cab2_pk8500_y1L=0; cab2_pk8500_y2L=0;
+cab2_pk8500_x1R=0; cab2_pk8500_x2R=0; cab2_pk8500_y1R=0; cab2_pk8500_y2R=0;
+
+cab2_lpf1_x1L=0; cab2_lpf1_x2L=0; cab2_lpf1_y1L=0; cab2_lpf1_y2L=0;
+cab2_lpf1_x1R=0; cab2_lpf1_x2R=0; cab2_lpf1_y1R=0; cab2_lpf1_y2R=0;
+cab2_lpf2_x1L=0; cab2_lpf2_x2L=0; cab2_lpf2_y1L=0; cab2_lpf2_y2L=0;
+cab2_lpf2_x1R=0; cab2_lpf2_x2R=0; cab2_lpf2_y1R=0; cab2_lpf2_y2R=0;
+
+// Cab3 states
+cab3_hpf1_x1L=0; cab3_hpf1_x2L=0; cab3_hpf1_y1L=0; cab3_hpf1_y2L=0;
+cab3_hpf1_x1R=0; cab3_hpf1_x2R=0; cab3_hpf1_y1R=0; cab3_hpf1_y2R=0;
+cab3_hpf2_x1L=0; cab3_hpf2_x2L=0; cab3_hpf2_y1L=0; cab3_hpf2_y2L=0;
+cab3_hpf2_x1R=0; cab3_hpf2_x2R=0; cab3_hpf2_y1R=0; cab3_hpf2_y2R=0;
+
+cab3_pk173_x1L=0; cab3_pk173_x2L=0; cab3_pk173_y1L=0; cab3_pk173_y2L=0;
+cab3_pk173_x1R=0; cab3_pk173_x2R=0; cab3_pk173_y1R=0; cab3_pk173_y2R=0;
+
+cab3_pk245_x1L=0; cab3_pk245_x2L=0; cab3_pk245_y1L=0; cab3_pk245_y2L=0;
+cab3_pk245_x1R=0; cab3_pk245_x2R=0; cab3_pk245_y1R=0; cab3_pk245_y2R=0;
+
+cab3_pk354_x1L=0; cab3_pk354_x2L=0; cab3_pk354_y1L=0; cab3_pk354_y2L=0;
+cab3_pk354_x1R=0; cab3_pk354_x2R=0; cab3_pk354_y1R=0; cab3_pk354_y2R=0;
+
+cab3_pk581_x1L=0; cab3_pk581_x2L=0; cab3_pk581_y1L=0; cab3_pk581_y2L=0;
+cab3_pk581_x1R=0; cab3_pk581_x2R=0; cab3_pk581_y1R=0; cab3_pk581_y2R=0;
+
+cab3_pk1246_x1L=0; cab3_pk1246_x2L=0; cab3_pk1246_y1L=0; cab3_pk1246_y2L=0;
+cab3_pk1246_x1R=0; cab3_pk1246_x2R=0; cab3_pk1246_y1R=0; cab3_pk1246_y2R=0;
+
+cab3_pk1841_x1L=0; cab3_pk1841_x2L=0; cab3_pk1841_y1L=0; cab3_pk1841_y2L=0;
+cab3_pk1841_x1R=0; cab3_pk1841_x2R=0; cab3_pk1841_y1R=0; cab3_pk1841_y2R=0;
+
+cab3_pk1864_x1L=0; cab3_pk1864_x2L=0; cab3_pk1864_y1L=0; cab3_pk1864_y2L=0;
+cab3_pk1864_x1R=0; cab3_pk1864_x2R=0; cab3_pk1864_y1R=0; cab3_pk1864_y2R=0;
+
+cab3_pk2167_x1L=0; cab3_pk2167_x2L=0; cab3_pk2167_y1L=0; cab3_pk2167_y2L=0;
+cab3_pk2167_x1R=0; cab3_pk2167_x2R=0; cab3_pk2167_y1R=0; cab3_pk2167_y2R=0;
+
+cab3_pk2800_x1L=0; cab3_pk2800_x2L=0; cab3_pk2800_y1L=0; cab3_pk2800_y2L=0;
+cab3_pk2800_x1R=0; cab3_pk2800_x2R=0; cab3_pk2800_y1R=0; cab3_pk2800_y2R=0;
+
+cab3_pk3200_x1L=0; cab3_pk3200_x2L=0; cab3_pk3200_y1L=0; cab3_pk3200_y2L=0;
+cab3_pk3200_x1R=0; cab3_pk3200_x2R=0; cab3_pk3200_y1R=0; cab3_pk3200_y2R=0;
+
+cab3_pk6500_x1L=0; cab3_pk6500_x2L=0; cab3_pk6500_y1L=0; cab3_pk6500_y2L=0;
+cab3_pk6500_x1R=0; cab3_pk6500_x2R=0; cab3_pk6500_y1R=0; cab3_pk6500_y2R=0;
+
+cab3_pk7858_x1L=0; cab3_pk7858_x2L=0; cab3_pk7858_y1L=0; cab3_pk7858_y2L=0;
+cab3_pk7858_x1R=0; cab3_pk7858_x2R=0; cab3_pk7858_y1R=0; cab3_pk7858_y2R=0;
+
+cab3_lpf1_x1L=0; cab3_lpf1_x2L=0; cab3_lpf1_y1L=0; cab3_lpf1_y2L=0;
+cab3_lpf1_x1R=0; cab3_lpf1_x2R=0; cab3_lpf1_y1R=0; cab3_lpf1_y2R=0;
+cab3_lpf2_x1L=0; cab3_lpf2_x2L=0; cab3_lpf2_y1L=0; cab3_lpf2_y2L=0;
+cab3_lpf2_x1R=0; cab3_lpf2_x2R=0; cab3_lpf2_y1R=0; cab3_lpf2_y2R=0;
+
+cab3_pk11000_x1L=0; cab3_pk11000_x2L=0; cab3_pk11000_y1L=0; cab3_pk11000_y2L=0;
+cab3_pk11000_x1R=0; cab3_pk11000_x2R=0; cab3_pk11000_y1R=0; cab3_pk11000_y2R=0;
+
+// Mid EQ states
+mid_hpf_x1L=0; mid_hpf_x2L=0; mid_hpf_y1L=0; mid_hpf_y2L=0;
+mid_hpf_x1R=0; mid_hpf_x2R=0; mid_hpf_y1R=0; mid_hpf_y2R=0;
+
+mid_ls120_x1L=0; mid_ls120_x2L=0; mid_ls120_y1L=0; mid_ls120_y2L=0;
+mid_ls120_x1R=0; mid_ls120_x2R=0; mid_ls120_y1R=0; mid_ls120_y2R=0;
+
+mid_pk90_x1L=0; mid_pk90_x2L=0; mid_pk90_y1L=0; mid_pk90_y2L=0;
+mid_pk90_x1R=0; mid_pk90_x2R=0; mid_pk90_y1R=0; mid_pk90_y2R=0;
+
+mid_pk364_x1L=0; mid_pk364_x2L=0; mid_pk364_y1L=0; mid_pk364_y2L=0;
+mid_pk364_x1R=0; mid_pk364_x2R=0; mid_pk364_y1R=0; mid_pk364_y2R=0;
+
+mid_pk850_x1L=0; mid_pk850_x2L=0; mid_pk850_y1L=0; mid_pk850_y2L=0;
+mid_pk850_x1R=0; mid_pk850_x2R=0; mid_pk850_y1R=0; mid_pk850_y2R=0;
+
+mid_pk1320_x1L=0; mid_pk1320_x2L=0; mid_pk1320_y1L=0; mid_pk1320_y2L=0;
+mid_pk1320_x1R=0; mid_pk1320_x2R=0; mid_pk1320_y1R=0; mid_pk1320_y2R=0;
+
+mid_pk7400_x1L=0; mid_pk7400_x2L=0; mid_pk7400_y1L=0; mid_pk7400_y2L=0;
+mid_pk7400_x1R=0; mid_pk7400_x2R=0; mid_pk7400_y1R=0; mid_pk7400_y2R=0;
+
+auto_gain_env = 0;
+gate_env = 0;
+gate_rms = 0;
+gate_gain = 1;
+gate_hold_rem = 0;
+gate_state = 1;
+max_lookahead = 512;
+lookahead_wp = 0;
+
+// Tone Stack states (3-band passive EQ)
+ts_bass_x1L=0; ts_bass_x2L=0; ts_bass_y1L=0; ts_bass_y2L=0;
+ts_bass_x1R=0; ts_bass_x2R=0; ts_bass_y1R=0; ts_bass_y2R=0;
+ts_mid_x1L=0; ts_mid_x2L=0; ts_mid_y1L=0; ts_mid_y2L=0;
+ts_mid_x1R=0; ts_mid_x2R=0; ts_mid_y1R=0; ts_mid_y2R=0;
+ts_treb_x1L=0; ts_treb_x2L=0; ts_treb_y1L=0; ts_treb_y2L=0;
+ts_treb_x1R=0; ts_treb_x2R=0; ts_treb_y1R=0; ts_treb_y2R=0;
+
+// Presence filter state
+pres_x1L=0; pres_x2L=0; pres_y1L=0; pres_y2L=0;
+pres_x1R=0; pres_x2R=0; pres_y1R=0; pres_y2R=0;
+
+// Resonance filter state
+res_x1L=0; res_x2L=0; res_y1L=0; res_y2L=0;
+res_x1R=0; res_x2R=0; res_y1R=0; res_y2R=0;
+
+// Bright Cap state (1-pole HPF)
+bc_x1L=0; bc_y1L=0;
+bc_x1R=0; bc_y1R=0;
+
+// Sag envelope follower
+sag_env = 0;
+sag_gain = 1;
+
+// Transient Enhancer states
+te_fast = 0;
+te_slow = 0;
+
+// Harmonic Exciter states
+hex_x1L=0; hex_x2L=0; hex_y1L=0; hex_y2L=0;
+hex_x1R=0; hex_x2R=0; hex_y1R=0; hex_y2R=0;
+
+// DC blocker states
+dc_x1L=0; dc_y1L=0;
+dc_x1R=0; dc_y1R=0;
+
+// Hard mode auto gain
+auto_gain = 1;
+
+@slider
+gate_enable = slider1;
+gate_open_thresh = 10 ^ (slider2 / 20);
+gate_close_thresh = gate_open_thresh * 0.501;
+gate_env_attack = 1 - exp(-1 / (srate * 0.003));
+gate_env_release = 1 - exp(-1 / (srate * 0.05));
+gate_gain_attack = 1 - exp(-1 / (srate * 0.006));
+gate_gain_release = 1 - exp(-1 / (srate * 0.1));
+gate_min_gain = 0.0001;
+gate_ratio = 4;
+gate_lookahead = floor(0.002 * srate);
+input_gain = 10 ^ ((slider3 + 21) / 20);
+cab_select = slider13;
+drive = 10 ^ (slider5 / 20);
+drive_comp = drive > 1 ? 1 / (1 + (drive - 1) * 0.1) : 1;
+master_vol = 10 ^ (slider12 / 20);
+amp_mode = slider4;
+
+// Tone Stack coefficients (interactive EQ)
+bass_val = slider6;
+mid_val = slider7;
+treb_val = slider8;
+
+ts_bass_w = 2 * pi * 200 / srate;
+ts_bass_cos = cos(ts_bass_w);
+ts_bass_sin = sin(ts_bass_w);
+ts_bass_A = 10 ^ ((bass_val - 5) * 4 / 40);
+ts_bass_alpha = ts_bass_sin / (2 * 0.7);
+ts_bass_sqrtA = sqrt(ts_bass_A);
+ts_bass_b0 = ts_bass_A * ((ts_bass_A + 1) - (ts_bass_A - 1) * ts_bass_cos + 2 * ts_bass_sqrtA * ts_bass_alpha);
+ts_bass_b1 = 2 * ts_bass_A * ((ts_bass_A - 1) - (ts_bass_A + 1) * ts_bass_cos);
+ts_bass_b2 = ts_bass_A * ((ts_bass_A + 1) - (ts_bass_A - 1) * ts_bass_cos - 2 * ts_bass_sqrtA * ts_bass_alpha);
+ts_bass_a0 = (ts_bass_A + 1) + (ts_bass_A - 1) * ts_bass_cos + 2 * ts_bass_sqrtA * ts_bass_alpha;
+ts_bass_a1 = -2 * ((ts_bass_A - 1) + (ts_bass_A + 1) * ts_bass_cos);
+ts_bass_a2 = (ts_bass_A + 1) + (ts_bass_A - 1) * ts_bass_cos - 2 * ts_bass_sqrtA * ts_bass_alpha;
+ts_bass_b0n = ts_bass_b0 / ts_bass_a0;
+ts_bass_b1n = ts_bass_b1 / ts_bass_a0;
+ts_bass_b2n = ts_bass_b2 / ts_bass_a0;
+ts_bass_a1n = ts_bass_a1 / ts_bass_a0;
+ts_bass_a2n = ts_bass_a2 / ts_bass_a0;
+
+ts_mid_w = 2 * pi * 800 / srate;
+ts_mid_cos = cos(ts_mid_w);
+ts_mid_sin = sin(ts_mid_w);
+ts_mid_A = 10 ^ ((mid_val - 5) * 4 / 40);
+ts_mid_alpha = ts_mid_sin / (2 * 0.8);
+ts_mid_b0 = 1 + ts_mid_alpha * ts_mid_A;
+ts_mid_b1 = -2 * ts_mid_cos;
+ts_mid_b2 = 1 - ts_mid_alpha * ts_mid_A;
+ts_mid_a0 = 1 + ts_mid_alpha / ts_mid_A;
+ts_mid_a1 = -2 * ts_mid_cos;
+ts_mid_a2 = 1 - ts_mid_alpha / ts_mid_A;
+ts_mid_b0n = ts_mid_b0 / ts_mid_a0;
+ts_mid_b1n = ts_mid_b1 / ts_mid_a0;
+ts_mid_b2n = ts_mid_b2 / ts_mid_a0;
+ts_mid_a1n = ts_mid_a1 / ts_mid_a0;
+ts_mid_a2n = ts_mid_a2 / ts_mid_a0;
+
+ts_treb_w = 2 * pi * 3000 / srate;
+ts_treb_cos = cos(ts_treb_w);
+ts_treb_sin = sin(ts_treb_w);
+ts_treb_A = 10 ^ ((treb_val - 5) * 4 / 40);
+ts_treb_alpha = ts_treb_sin / (2 * 0.7);
+ts_treb_sqrtA = sqrt(ts_treb_A);
+ts_treb_b0 = ts_treb_A * ((ts_treb_A + 1) + (ts_treb_A - 1) * ts_treb_cos + 2 * ts_treb_sqrtA * ts_treb_alpha);
+ts_treb_b1 = -2 * ts_treb_A * ((ts_treb_A - 1) + (ts_treb_A + 1) * ts_treb_cos);
+ts_treb_b2 = ts_treb_A * ((ts_treb_A + 1) + (ts_treb_A - 1) * ts_treb_cos - 2 * ts_treb_sqrtA * ts_treb_alpha);
+ts_treb_a0 = (ts_treb_A + 1) - (ts_treb_A - 1) * ts_treb_cos + 2 * ts_treb_sqrtA * ts_treb_alpha;
+ts_treb_a1 = 2 * ((ts_treb_A - 1) - (ts_treb_A + 1) * ts_treb_cos);
+ts_treb_a2 = (ts_treb_A + 1) - (ts_treb_A - 1) * ts_treb_cos - 2 * ts_treb_sqrtA * ts_treb_alpha;
+ts_treb_b0n = ts_treb_b0 / ts_treb_a0;
+ts_treb_b1n = ts_treb_b1 / ts_treb_a0;
+ts_treb_b2n = ts_treb_b2 / ts_treb_a0;
+ts_treb_a1n = ts_treb_a1 / ts_treb_a0;
+ts_treb_a2n = ts_treb_a2 / ts_treb_a0;
+
+// Presence coefficient (high shelf at 4kHz, NFB simulation)
+pres_amount = slider10 / 100;
+pres_w = 2 * pi * 4000 / srate;
+pres_cos = cos(pres_w);
+pres_sin = sin(pres_w);
+pres_A = 10 ^ (pres_amount * 8 / 40);
+pres_alpha = pres_sin / (2 * 0.7);
+pres_sqrtA = sqrt(pres_A);
+pres_b0 = pres_A * ((pres_A + 1) + (pres_A - 1) * pres_cos + 2 * pres_sqrtA * pres_alpha);
+pres_b1 = -2 * pres_A * ((pres_A - 1) + (pres_A + 1) * pres_cos);
+pres_b2 = pres_A * ((pres_A + 1) + (pres_A - 1) * pres_cos - 2 * pres_sqrtA * pres_alpha);
+pres_a0 = (pres_A + 1) - (pres_A - 1) * pres_cos + 2 * pres_sqrtA * pres_alpha;
+pres_a1 = 2 * ((pres_A - 1) - (pres_A + 1) * pres_cos);
+pres_a2 = (pres_A + 1) - (pres_A - 1) * pres_cos - 2 * pres_sqrtA * pres_alpha;
+pres_b0n = pres_b0 / pres_a0;
+pres_b1n = pres_b1 / pres_a0;
+pres_b2n = pres_b2 / pres_a0;
+pres_a1n = pres_a1 / pres_a0;
+pres_a2n = pres_a2 / pres_a0;
+
+// Resonance coefficient (low shelf at 100Hz)
+res_amount = slider11 / 100;
+res_w = 2 * pi * 100 / srate;
+res_cos = cos(res_w);
+res_sin = sin(res_w);
+res_A = 10 ^ (res_amount * 8 / 40);
+res_alpha = res_sin / (2 * 0.9);
+res_sqrtA = sqrt(res_A);
+res_b0 = res_A * ((res_A + 1) - (res_A - 1) * res_cos + 2 * res_sqrtA * res_alpha);
+res_b1 = 2 * res_A * ((res_A - 1) - (res_A + 1) * res_cos);
+res_b2 = res_A * ((res_A + 1) - (res_A - 1) * res_cos - 2 * res_sqrtA * res_alpha);
+res_a0 = (res_A + 1) + (res_A - 1) * res_cos + 2 * res_sqrtA * res_alpha;
+res_a1 = -2 * ((res_A - 1) + (res_A + 1) * res_cos);
+res_a2 = (res_A + 1) + (res_A - 1) * res_cos - 2 * res_sqrtA * res_alpha;
+res_b0n = res_b0 / res_a0;
+res_b1n = res_b1 / res_a0;
+res_b2n = res_b2 / res_a0;
+res_a1n = res_a1 / res_a0;
+res_a2n = res_a2 / res_a0;
+
+// Sag parameters
+sag_amount = slider9 / 100;
+sag_attack = 1 - exp(-1 / (srate * 0.002));
+sag_release = 1 - exp(-1 / (srate * 0.1));
+
+// Bright Cap
+bright_cap = slider14;
+bc_cutoff = bright_cap == 1 ? 0.0002 : bright_cap == 2 ? 0.0006 : 0;
+
+// Transient Enhancer (attack boost via envelope)
+te_amount = slider15 / 100;
+te_attack = 1 - exp(-1 / (srate * 0.003));
+te_release = 1 - exp(-1 / (srate * 0.05));
+
+// Harmonic Exciter (HPF at 5kHz + soft saturation)
+hex_amount = slider16 / 100;
+hex_w = 2 * pi * 5000 / srate;
+hex_cos = cos(hex_w);
+hex_sin = sin(hex_w);
+hex_alpha = hex_sin / (2 * 0.707);
+hex_b0 = (1 + hex_cos) / 2;
+hex_b1 = -(1 + hex_cos);
+hex_b2 = (1 + hex_cos) / 2;
+hex_a0 = 1 + hex_alpha;
+hex_a1 = -2 * hex_cos;
+hex_a2 = 1 - hex_alpha;
+hex_b0n = hex_b0 / hex_a0;
+hex_b1n = hex_b1 / hex_a0;
+hex_b2n = hex_b2 / hex_a0;
+hex_a1n = hex_a1 / hex_a0;
+hex_a2n = hex_a2 / hex_a0;
+
+// Pre-EQ coefficients
+hpf_w = 2 * pi * 95 / srate;
+hpf_cos = cos(hpf_w);
+hpf_sin = sin(hpf_w);
+hpf_alpha = hpf_sin / (2 * 0.4);
+hpf_b0 = (1 + hpf_cos) / 2;
+hpf_b1 = -(1 + hpf_cos);
+hpf_b2 = (1 + hpf_cos) / 2;
+hpf_a0 = 1 + hpf_alpha;
+hpf_a1 = -2 * hpf_cos;
+hpf_a2 = 1 - hpf_alpha;
+hpf_b0n = hpf_b0 / hpf_a0;
+hpf_b1n = hpf_b1 / hpf_a0;
+hpf_b2n = hpf_b2 / hpf_a0;
+hpf_a1n = hpf_a1 / hpf_a0;
+hpf_a2n = hpf_a2 / hpf_a0;
+
+pk95_w = 2 * pi * 95 / srate;
+pk95_cos = cos(pk95_w);
+pk95_sin = sin(pk95_w);
+pk95_A = 10 ^ (-4.2 / 40);
+pk95_alpha = pk95_sin / (2 * 0.11);
+pk95_b0 = 1 + pk95_alpha * pk95_A;
+pk95_b1 = -2 * pk95_cos;
+pk95_b2 = 1 - pk95_alpha * pk95_A;
+pk95_a0 = 1 + pk95_alpha / pk95_A;
+pk95_a1 = -2 * pk95_cos;
+pk95_a2 = 1 - pk95_alpha / pk95_A;
+pk95_b0n = pk95_b0 / pk95_a0;
+pk95_b1n = pk95_b1 / pk95_a0;
+pk95_b2n = pk95_b2 / pk95_a0;
+pk95_a1n = pk95_a1 / pk95_a0;
+pk95_a2n = pk95_a2 / pk95_a0;
+
+sh108_w = 2 * pi * 108 / srate;
+sh108_cos = cos(sh108_w);
+sh108_sin = sin(sh108_w);
+sh108_A = 10 ^ (-7.0 / 40);
+sh108_alpha = sh108_sin / (2 * 2.1);
+sh108_sqrtA = sqrt(sh108_A);
+sh108_b0 = sh108_A * ((sh108_A + 1) - (sh108_A - 1) * sh108_cos + 2 * sh108_sqrtA * sh108_alpha);
+sh108_b1 = 2 * sh108_A * ((sh108_A - 1) - (sh108_A + 1) * sh108_cos);
+sh108_b2 = sh108_A * ((sh108_A + 1) - (sh108_A - 1) * sh108_cos - 2 * sh108_sqrtA * sh108_alpha);
+sh108_a0 = (sh108_A + 1) + (sh108_A - 1) * sh108_cos + 2 * sh108_sqrtA * sh108_alpha;
+sh108_a1 = -2 * ((sh108_A - 1) + (sh108_A + 1) * sh108_cos);
+sh108_a2 = (sh108_A + 1) + (sh108_A - 1) * sh108_cos - 2 * sh108_sqrtA * sh108_alpha;
+sh108_b0n = sh108_b0 / sh108_a0;
+sh108_b1n = sh108_b1 / sh108_a0;
+sh108_b2n = sh108_b2 / sh108_a0;
+sh108_a1n = sh108_a1 / sh108_a0;
+sh108_a2n = sh108_a2 / sh108_a0;
+
+pk291_w = 2 * pi * 291 / srate;
+pk291_cos = cos(pk291_w);
+pk291_sin = sin(pk291_w);
+pk291_A = 10 ^ (1.0 / 40);
+pk291_alpha = pk291_sin / (2 * 0.75);
+pk291_b0 = 1 + pk291_alpha * pk291_A;
+pk291_b1 = -2 * pk291_cos;
+pk291_b2 = 1 - pk291_alpha * pk291_A;
+pk291_a0 = 1 + pk291_alpha / pk291_A;
+pk291_a1 = -2 * pk291_cos;
+pk291_a2 = 1 - pk291_alpha / pk291_A;
+pk291_b0n = pk291_b0 / pk291_a0;
+pk291_b1n = pk291_b1 / pk291_a0;
+pk291_b2n = pk291_b2 / pk291_a0;
+pk291_a1n = pk291_a1 / pk291_a0;
+pk291_a2n = pk291_a2 / pk291_a0;
+
+pk120_w = 2 * pi * 120 / srate;
+pk120_cos = cos(pk120_w);
+pk120_sin = sin(pk120_w);
+pk120_A = 10 ^ (4.5 / 40);
+pk120_alpha = pk120_sin / (2 * 0.7);
+pk120_b0 = 1 + pk120_alpha * pk120_A;
+pk120_b1 = -2 * pk120_cos;
+pk120_b2 = 1 - pk120_alpha * pk120_A;
+pk120_a0 = 1 + pk120_alpha / pk120_A;
+pk120_a1 = -2 * pk120_cos;
+pk120_a2 = 1 - pk120_alpha / pk120_A;
+pk120_b0n = pk120_b0 / pk120_a0;
+pk120_b1n = pk120_b1 / pk120_a0;
+pk120_b2n = pk120_b2 / pk120_a0;
+pk120_a1n = pk120_a1 / pk120_a0;
+pk120_a2n = pk120_a2 / pk120_a0;
+
+pk2k_w = 2 * pi * 2000 / srate;
+pk2k_cos = cos(pk2k_w);
+pk2k_sin = sin(pk2k_w);
+pk2k_A = 10 ^ (13.0 / 40);
+pk2k_alpha = pk2k_sin / (2 * 0.2);
+pk2k_b0 = 1 + pk2k_alpha * pk2k_A;
+pk2k_b1 = -2 * pk2k_cos;
+pk2k_b2 = 1 - pk2k_alpha * pk2k_A;
+pk2k_a0 = 1 + pk2k_alpha / pk2k_A;
+pk2k_a1 = -2 * pk2k_cos;
+pk2k_a2 = 1 - pk2k_alpha / pk2k_A;
+pk2k_b0n = pk2k_b0 / pk2k_a0;
+pk2k_b1n = pk2k_b1 / pk2k_a0;
+pk2k_b2n = pk2k_b2 / pk2k_a0;
+pk2k_a1n = pk2k_a1 / pk2k_a0;
+pk2k_a2n = pk2k_a2 / pk2k_a0;
+
+lpf_w = 2 * pi * 2026 / srate;
+lpf_cos = cos(lpf_w);
+lpf_sin = sin(lpf_w);
+lpf_alpha = lpf_sin / (2 * 0.75);
+lpf_b0 = (1 - lpf_cos) / 2;
+lpf_b1 = 1 - lpf_cos;
+lpf_b2 = (1 - lpf_cos) / 2;
+lpf_a0 = 1 + lpf_alpha;
+lpf_a1 = -2 * lpf_cos;
+lpf_a2 = 1 - lpf_alpha;
+lpf_b0n = lpf_b0 / lpf_a0;
+lpf_b1n = lpf_b1 / lpf_a0;
+lpf_b2n = lpf_b2 / lpf_a0;
+lpf_a1n = lpf_a1 / lpf_a0;
+lpf_a2n = lpf_a2 / lpf_a0;
+
+// Cab1 coefficients
+cab1_hpf_w = 2 * pi * 65 / srate;
+cab1_hpf_cos = cos(cab1_hpf_w);
+cab1_hpf_sin = sin(cab1_hpf_w);
+cab1_hpf_alpha = cab1_hpf_sin / (2 * 0.7);
+cab1_hpf_b0 = (1 + cab1_hpf_cos) / 2;
+cab1_hpf_b1 = -(1 + cab1_hpf_cos);
+cab1_hpf_b2 = (1 + cab1_hpf_cos) / 2;
+cab1_hpf_a0 = 1 + cab1_hpf_alpha;
+cab1_hpf_a1 = -2 * cab1_hpf_cos;
+cab1_hpf_a2 = 1 - cab1_hpf_alpha;
+cab1_hpf_b0n = cab1_hpf_b0 / cab1_hpf_a0;
+cab1_hpf_b1n = cab1_hpf_b1 / cab1_hpf_a0;
+cab1_hpf_b2n = cab1_hpf_b2 / cab1_hpf_a0;
+cab1_hpf_a1n = cab1_hpf_a1 / cab1_hpf_a0;
+cab1_hpf_a2n = cab1_hpf_a2 / cab1_hpf_a0;
+
+cab1_pk98_w = 2 * pi * 98 / srate;
+cab1_pk98_cos = cos(cab1_pk98_w);
+cab1_pk98_sin = sin(cab1_pk98_w);
+cab1_pk98_A = 10 ^ (1.5 / 40);
+cab1_pk98_alpha = cab1_pk98_sin / (2 * 0.7);
+cab1_pk98_b0 = 1 + cab1_pk98_alpha * cab1_pk98_A;
+cab1_pk98_b1 = -2 * cab1_pk98_cos;
+cab1_pk98_b2 = 1 - cab1_pk98_alpha * cab1_pk98_A;
+cab1_pk98_a0 = 1 + cab1_pk98_alpha / cab1_pk98_A;
+cab1_pk98_a1 = -2 * cab1_pk98_cos;
+cab1_pk98_a2 = 1 - cab1_pk98_alpha / cab1_pk98_A;
+cab1_pk98_b0n = cab1_pk98_b0 / cab1_pk98_a0;
+cab1_pk98_b1n = cab1_pk98_b1 / cab1_pk98_a0;
+cab1_pk98_b2n = cab1_pk98_b2 / cab1_pk98_a0;
+cab1_pk98_a1n = cab1_pk98_a1 / cab1_pk98_a0;
+cab1_pk98_a2n = cab1_pk98_a2 / cab1_pk98_a0;
+
+cab1_pk259_w = 2 * pi * 259 / srate;
+cab1_pk259_cos = cos(cab1_pk259_w);
+cab1_pk259_sin = sin(cab1_pk259_w);
+cab1_pk259_A = 10 ^ (-2.25 / 40);
+cab1_pk259_alpha = cab1_pk259_sin / (2 * 1.9);
+cab1_pk259_b0 = 1 + cab1_pk259_alpha * cab1_pk259_A;
+cab1_pk259_b1 = -2 * cab1_pk259_cos;
+cab1_pk259_b2 = 1 - cab1_pk259_alpha * cab1_pk259_A;
+cab1_pk259_a0 = 1 + cab1_pk259_alpha / cab1_pk259_A;
+cab1_pk259_a1 = -2 * cab1_pk259_cos;
+cab1_pk259_a2 = 1 - cab1_pk259_alpha / cab1_pk259_A;
+cab1_pk259_b0n = cab1_pk259_b0 / cab1_pk259_a0;
+cab1_pk259_b1n = cab1_pk259_b1 / cab1_pk259_a0;
+cab1_pk259_b2n = cab1_pk259_b2 / cab1_pk259_a0;
+cab1_pk259_a1n = cab1_pk259_a1 / cab1_pk259_a0;
+cab1_pk259_a2n = cab1_pk259_a2 / cab1_pk259_a0;
+
+cab1_pk492_w = 2 * pi * 492 / srate;
+cab1_pk492_cos = cos(cab1_pk492_w);
+cab1_pk492_sin = sin(cab1_pk492_w);
+cab1_pk492_A = 10 ^ (-6.0 / 40);
+cab1_pk492_alpha = cab1_pk492_sin / (2 * 0.7);
+cab1_pk492_b0 = 1 + cab1_pk492_alpha * cab1_pk492_A;
+cab1_pk492_b1 = -2 * cab1_pk492_cos;
+cab1_pk492_b2 = 1 - cab1_pk492_alpha * cab1_pk492_A;
+cab1_pk492_a0 = 1 + cab1_pk492_alpha / cab1_pk492_A;
+cab1_pk492_a1 = -2 * cab1_pk492_cos;
+cab1_pk492_a2 = 1 - cab1_pk492_alpha / cab1_pk492_A;
+cab1_pk492_b0n = cab1_pk492_b0 / cab1_pk492_a0;
+cab1_pk492_b1n = cab1_pk492_b1 / cab1_pk492_a0;
+cab1_pk492_b2n = cab1_pk492_b2 / cab1_pk492_a0;
+cab1_pk492_a1n = cab1_pk492_a1 / cab1_pk492_a0;
+cab1_pk492_a2n = cab1_pk492_a2 / cab1_pk492_a0;
+
+cab1_pk552_w = 2 * pi * 552 / srate;
+cab1_pk552_cos = cos(cab1_pk552_w);
+cab1_pk552_sin = sin(cab1_pk552_w);
+cab1_pk552_A = 10 ^ (-5.5 / 40);
+cab1_pk552_alpha = cab1_pk552_sin / (2 * 1.5);
+cab1_pk552_b0 = 1 + cab1_pk552_alpha * cab1_pk552_A;
+cab1_pk552_b1 = -2 * cab1_pk552_cos;
+cab1_pk552_b2 = 1 - cab1_pk552_alpha * cab1_pk552_A;
+cab1_pk552_a0 = 1 + cab1_pk552_alpha / cab1_pk552_A;
+cab1_pk552_a1 = -2 * cab1_pk552_cos;
+cab1_pk552_a2 = 1 - cab1_pk552_alpha / cab1_pk552_A;
+cab1_pk552_b0n = cab1_pk552_b0 / cab1_pk552_a0;
+cab1_pk552_b1n = cab1_pk552_b1 / cab1_pk552_a0;
+cab1_pk552_b2n = cab1_pk552_b2 / cab1_pk552_a0;
+cab1_pk552_a1n = cab1_pk552_a1 / cab1_pk552_a0;
+cab1_pk552_a2n = cab1_pk552_a2 / cab1_pk552_a0;
+
+cab1_pk1515_w = 2 * pi * 1515 / srate;
+cab1_pk1515_cos = cos(cab1_pk1515_w);
+cab1_pk1515_sin = sin(cab1_pk1515_w);
+cab1_pk1515_A = 10 ^ (3.0 / 40);
+cab1_pk1515_alpha = cab1_pk1515_sin / (2 * 0.7);
+cab1_pk1515_b0 = 1 + cab1_pk1515_alpha * cab1_pk1515_A;
+cab1_pk1515_b1 = -2 * cab1_pk1515_cos;
+cab1_pk1515_b2 = 1 - cab1_pk1515_alpha * cab1_pk1515_A;
+cab1_pk1515_a0 = 1 + cab1_pk1515_alpha / cab1_pk1515_A;
+cab1_pk1515_a1 = -2 * cab1_pk1515_cos;
+cab1_pk1515_a2 = 1 - cab1_pk1515_alpha / cab1_pk1515_A;
+cab1_pk1515_b0n = cab1_pk1515_b0 / cab1_pk1515_a0;
+cab1_pk1515_b1n = cab1_pk1515_b1 / cab1_pk1515_a0;
+cab1_pk1515_b2n = cab1_pk1515_b2 / cab1_pk1515_a0;
+cab1_pk1515_a1n = cab1_pk1515_a1 / cab1_pk1515_a0;
+cab1_pk1515_a2n = cab1_pk1515_a2 / cab1_pk1515_a0;
+
+cab1_pk2446_w = 2 * pi * 2446 / srate;
+cab1_pk2446_cos = cos(cab1_pk2446_w);
+cab1_pk2446_sin = sin(cab1_pk2446_w);
+cab1_pk2446_A = 10 ^ (-3.0 / 40);
+cab1_pk2446_alpha = cab1_pk2446_sin / (2 * 6.7);
+cab1_pk2446_b0 = 1 + cab1_pk2446_alpha * cab1_pk2446_A;
+cab1_pk2446_b1 = -2 * cab1_pk2446_cos;
+cab1_pk2446_b2 = 1 - cab1_pk2446_alpha * cab1_pk2446_A;
+cab1_pk2446_a0 = 1 + cab1_pk2446_alpha / cab1_pk2446_A;
+cab1_pk2446_a1 = -2 * cab1_pk2446_cos;
+cab1_pk2446_a2 = 1 - cab1_pk2446_alpha / cab1_pk2446_A;
+cab1_pk2446_b0n = cab1_pk2446_b0 / cab1_pk2446_a0;
+cab1_pk2446_b1n = cab1_pk2446_b1 / cab1_pk2446_a0;
+cab1_pk2446_b2n = cab1_pk2446_b2 / cab1_pk2446_a0;
+cab1_pk2446_a1n = cab1_pk2446_a1 / cab1_pk2446_a0;
+cab1_pk2446_a2n = cab1_pk2446_a2 / cab1_pk2446_a0;
+
+cab1_pk2592_w = 2 * pi * 2592 / srate;
+cab1_pk2592_cos = cos(cab1_pk2592_w);
+cab1_pk2592_sin = sin(cab1_pk2592_w);
+cab1_pk2592_A = 10 ^ (1.3 / 40);
+cab1_pk2592_alpha = cab1_pk2592_sin / (2 * 0.7);
+cab1_pk2592_b0 = 1 + cab1_pk2592_alpha * cab1_pk2592_A;
+cab1_pk2592_b1 = -2 * cab1_pk2592_cos;
+cab1_pk2592_b2 = 1 - cab1_pk2592_alpha * cab1_pk2592_A;
+cab1_pk2592_a0 = 1 + cab1_pk2592_alpha / cab1_pk2592_A;
+cab1_pk2592_a1 = -2 * cab1_pk2592_cos;
+cab1_pk2592_a2 = 1 - cab1_pk2592_alpha / cab1_pk2592_A;
+cab1_pk2592_b0n = cab1_pk2592_b0 / cab1_pk2592_a0;
+cab1_pk2592_b1n = cab1_pk2592_b1 / cab1_pk2592_a0;
+cab1_pk2592_b2n = cab1_pk2592_b2 / cab1_pk2592_a0;
+cab1_pk2592_a1n = cab1_pk2592_a1 / cab1_pk2592_a0;
+cab1_pk2592_a2n = cab1_pk2592_a2 / cab1_pk2592_a0;
+
+cab1_pk3390_w = 2 * pi * 3390 / srate;
+cab1_pk3390_cos = cos(cab1_pk3390_w);
+cab1_pk3390_sin = sin(cab1_pk3390_w);
+cab1_pk3390_A = 10 ^ (-1.6 / 40);
+cab1_pk3390_alpha = cab1_pk3390_sin / (2 * 5.2);
+cab1_pk3390_b0 = 1 + cab1_pk3390_alpha * cab1_pk3390_A;
+cab1_pk3390_b1 = -2 * cab1_pk3390_cos;
+cab1_pk3390_b2 = 1 - cab1_pk3390_alpha * cab1_pk3390_A;
+cab1_pk3390_a0 = 1 + cab1_pk3390_alpha / cab1_pk3390_A;
+cab1_pk3390_a1 = -2 * cab1_pk3390_cos;
+cab1_pk3390_a2 = 1 - cab1_pk3390_alpha / cab1_pk3390_A;
+cab1_pk3390_b0n = cab1_pk3390_b0 / cab1_pk3390_a0;
+cab1_pk3390_b1n = cab1_pk3390_b1 / cab1_pk3390_a0;
+cab1_pk3390_b2n = cab1_pk3390_b2 / cab1_pk3390_a0;
+cab1_pk3390_a1n = cab1_pk3390_a1 / cab1_pk3390_a0;
+cab1_pk3390_a2n = cab1_pk3390_a2 / cab1_pk3390_a0;
+
+cab1_lpf_w = 2 * pi * 6000 / srate;
+cab1_lpf_cos = cos(cab1_lpf_w);
+cab1_lpf_sin = sin(cab1_lpf_w);
+cab1_lpf_alpha = cab1_lpf_sin / (2 * 0.7);
+cab1_lpf_b0 = (1 - cab1_lpf_cos) / 2;
+cab1_lpf_b1 = 1 - cab1_lpf_cos;
+cab1_lpf_b2 = (1 - cab1_lpf_cos) / 2;
+cab1_lpf_a0 = 1 + cab1_lpf_alpha;
+cab1_lpf_a1 = -2 * cab1_lpf_cos;
+cab1_lpf_a2 = 1 - cab1_lpf_alpha;
+cab1_lpf_b0n = cab1_lpf_b0 / cab1_lpf_a0;
+cab1_lpf_b1n = cab1_lpf_b1 / cab1_lpf_a0;
+cab1_lpf_b2n = cab1_lpf_b2 / cab1_lpf_a0;
+cab1_lpf_a1n = cab1_lpf_a1 / cab1_lpf_a0;
+cab1_lpf_a2n = cab1_lpf_a2 / cab1_lpf_a0;
+
+// Cab2 coefficients
+cab2_hpf_w = 2 * pi * 107 / srate;
+cab2_hpf_cos = cos(cab2_hpf_w);
+cab2_hpf_sin = sin(cab2_hpf_w);
+cab2_hpf_alpha = cab2_hpf_sin / (2 * 0.83);
+cab2_hpf_b0 = (1 + cab2_hpf_cos) / 2;
+cab2_hpf_b1 = -(1 + cab2_hpf_cos);
+cab2_hpf_b2 = (1 + cab2_hpf_cos) / 2;
+cab2_hpf_a0 = 1 + cab2_hpf_alpha;
+cab2_hpf_a1 = -2 * cab2_hpf_cos;
+cab2_hpf_a2 = 1 - cab2_hpf_alpha;
+cab2_hpf_b0n = cab2_hpf_b0 / cab2_hpf_a0;
+cab2_hpf_b1n = cab2_hpf_b1 / cab2_hpf_a0;
+cab2_hpf_b2n = cab2_hpf_b2 / cab2_hpf_a0;
+cab2_hpf_a1n = cab2_hpf_a1 / cab2_hpf_a0;
+cab2_hpf_a2n = cab2_hpf_a2 / cab2_hpf_a0;
+
+cab2_pk224_w = 2 * pi * 224 / srate;
+cab2_pk224_cos = cos(cab2_pk224_w);
+cab2_pk224_sin = sin(cab2_pk224_w);
+cab2_pk224_A = 10 ^ (1.0 / 40);
+cab2_pk224_alpha = cab2_pk224_sin / (2 * 1.4);
+cab2_pk224_b0 = 1 + cab2_pk224_alpha * cab2_pk224_A;
+cab2_pk224_b1 = -2 * cab2_pk224_cos;
+cab2_pk224_b2 = 1 - cab2_pk224_alpha * cab2_pk224_A;
+cab2_pk224_a0 = 1 + cab2_pk224_alpha / cab2_pk224_A;
+cab2_pk224_a1 = -2 * cab2_pk224_cos;
+cab2_pk224_a2 = 1 - cab2_pk224_alpha / cab2_pk224_A;
+cab2_pk224_b0n = cab2_pk224_b0 / cab2_pk224_a0;
+cab2_pk224_b1n = cab2_pk224_b1 / cab2_pk224_a0;
+cab2_pk224_b2n = cab2_pk224_b2 / cab2_pk224_a0;
+cab2_pk224_a1n = cab2_pk224_a1 / cab2_pk224_a0;
+cab2_pk224_a2n = cab2_pk224_a2 / cab2_pk224_a0;
+
+cab2_ls428_w = 2 * pi * 428 / srate;
+cab2_ls428_cos = cos(cab2_ls428_w);
+cab2_ls428_sin = sin(cab2_ls428_w);
+cab2_ls428_A = 10 ^ (6.0 / 40);
+cab2_ls428_alpha = cab2_ls428_sin / (2 * 0.7);
+cab2_ls428_sqrtA = sqrt(cab2_ls428_A);
+cab2_ls428_b0 = cab2_ls428_A * ((cab2_ls428_A + 1) - (cab2_ls428_A - 1) * cab2_ls428_cos + 2 * cab2_ls428_sqrtA * cab2_ls428_alpha);
+cab2_ls428_b1 = 2 * cab2_ls428_A * ((cab2_ls428_A - 1) - (cab2_ls428_A + 1) * cab2_ls428_cos);
+cab2_ls428_b2 = cab2_ls428_A * ((cab2_ls428_A + 1) - (cab2_ls428_A - 1) * cab2_ls428_cos - 2 * cab2_ls428_sqrtA * cab2_ls428_alpha);
+cab2_ls428_a0 = (cab2_ls428_A + 1) + (cab2_ls428_A - 1) * cab2_ls428_cos + 2 * cab2_ls428_sqrtA * cab2_ls428_alpha;
+cab2_ls428_a1 = -2 * ((cab2_ls428_A - 1) + (cab2_ls428_A + 1) * cab2_ls428_cos);
+cab2_ls428_a2 = (cab2_ls428_A + 1) + (cab2_ls428_A - 1) * cab2_ls428_cos - 2 * cab2_ls428_sqrtA * cab2_ls428_alpha;
+cab2_ls428_b0n = cab2_ls428_b0 / cab2_ls428_a0;
+cab2_ls428_b1n = cab2_ls428_b1 / cab2_ls428_a0;
+cab2_ls428_b2n = cab2_ls428_b2 / cab2_ls428_a0;
+cab2_ls428_a1n = cab2_ls428_a1 / cab2_ls428_a0;
+cab2_ls428_a2n = cab2_ls428_a2 / cab2_ls428_a0;
+
+cab2_pk635_w = 2 * pi * 635 / srate;
+cab2_pk635_cos = cos(cab2_pk635_w);
+cab2_pk635_sin = sin(cab2_pk635_w);
+cab2_pk635_A = 10 ^ (2.0 / 40);
+cab2_pk635_alpha = cab2_pk635_sin / (2 * 2.2);
+cab2_pk635_b0 = 1 + cab2_pk635_alpha * cab2_pk635_A;
+cab2_pk635_b1 = -2 * cab2_pk635_cos;
+cab2_pk635_b2 = 1 - cab2_pk635_alpha * cab2_pk635_A;
+cab2_pk635_a0 = 1 + cab2_pk635_alpha / cab2_pk635_A;
+cab2_pk635_a1 = -2 * cab2_pk635_cos;
+cab2_pk635_a2 = 1 - cab2_pk635_alpha / cab2_pk635_A;
+cab2_pk635_b0n = cab2_pk635_b0 / cab2_pk635_a0;
+cab2_pk635_b1n = cab2_pk635_b1 / cab2_pk635_a0;
+cab2_pk635_b2n = cab2_pk635_b2 / cab2_pk635_a0;
+cab2_pk635_a1n = cab2_pk635_a1 / cab2_pk635_a0;
+cab2_pk635_a2n = cab2_pk635_a2 / cab2_pk635_a0;
+
+cab2_pk1658_w = 2 * pi * 1658 / srate;
+cab2_pk1658_cos = cos(cab2_pk1658_w);
+cab2_pk1658_sin = sin(cab2_pk1658_w);
+cab2_pk1658_A = 10 ^ (5.7 / 40);
+cab2_pk1658_alpha = cab2_pk1658_sin / (2 * 2.2);
+cab2_pk1658_b0 = 1 + cab2_pk1658_alpha * cab2_pk1658_A;
+cab2_pk1658_b1 = -2 * cab2_pk1658_cos;
+cab2_pk1658_b2 = 1 - cab2_pk1658_alpha * cab2_pk1658_A;
+cab2_pk1658_a0 = 1 + cab2_pk1658_alpha / cab2_pk1658_A;
+cab2_pk1658_a1 = -2 * cab2_pk1658_cos;
+cab2_pk1658_a2 = 1 - cab2_pk1658_alpha / cab2_pk1658_A;
+cab2_pk1658_b0n = cab2_pk1658_b0 / cab2_pk1658_a0;
+cab2_pk1658_b1n = cab2_pk1658_b1 / cab2_pk1658_a0;
+cab2_pk1658_b2n = cab2_pk1658_b2 / cab2_pk1658_a0;
+cab2_pk1658_a1n = cab2_pk1658_a1 / cab2_pk1658_a0;
+cab2_pk1658_a2n = cab2_pk1658_a2 / cab2_pk1658_a0;
+
+cab2_pk3840_w = 2 * pi * 3840 / srate;
+cab2_pk3840_cos = cos(cab2_pk3840_w);
+cab2_pk3840_sin = sin(cab2_pk3840_w);
+cab2_pk3840_A = 10 ^ (5.7 / 40);
+cab2_pk3840_alpha = cab2_pk3840_sin / (2 * 1.8);
+cab2_pk3840_b0 = 1 + cab2_pk3840_alpha * cab2_pk3840_A;
+cab2_pk3840_b1 = -2 * cab2_pk3840_cos;
+cab2_pk3840_b2 = 1 - cab2_pk3840_alpha * cab2_pk3840_A;
+cab2_pk3840_a0 = 1 + cab2_pk3840_alpha / cab2_pk3840_A;
+cab2_pk3840_a1 = -2 * cab2_pk3840_cos;
+cab2_pk3840_a2 = 1 - cab2_pk3840_alpha / cab2_pk3840_A;
+cab2_pk3840_b0n = cab2_pk3840_b0 / cab2_pk3840_a0;
+cab2_pk3840_b1n = cab2_pk3840_b1 / cab2_pk3840_a0;
+cab2_pk3840_b2n = cab2_pk3840_b2 / cab2_pk3840_a0;
+cab2_pk3840_a1n = cab2_pk3840_a1 / cab2_pk3840_a0;
+cab2_pk3840_a2n = cab2_pk3840_a2 / cab2_pk3840_a0;
+
+cab2_pk8500_w = 2 * pi * 8500 / srate;
+cab2_pk8500_cos = cos(cab2_pk8500_w);
+cab2_pk8500_sin = sin(cab2_pk8500_w);
+cab2_pk8500_A = 10 ^ (6.0 / 40);
+cab2_pk8500_alpha = cab2_pk8500_sin / (2 * 3.0);
+cab2_pk8500_b0 = 1 + cab2_pk8500_alpha * cab2_pk8500_A;
+cab2_pk8500_b1 = -2 * cab2_pk8500_cos;
+cab2_pk8500_b2 = 1 - cab2_pk8500_alpha * cab2_pk8500_A;
+cab2_pk8500_a0 = 1 + cab2_pk8500_alpha / cab2_pk8500_A;
+cab2_pk8500_a1 = -2 * cab2_pk8500_cos;
+cab2_pk8500_a2 = 1 - cab2_pk8500_alpha / cab2_pk8500_A;
+cab2_pk8500_b0n = cab2_pk8500_b0 / cab2_pk8500_a0;
+cab2_pk8500_b1n = cab2_pk8500_b1 / cab2_pk8500_a0;
+cab2_pk8500_b2n = cab2_pk8500_b2 / cab2_pk8500_a0;
+cab2_pk8500_a1n = cab2_pk8500_a1 / cab2_pk8500_a0;
+cab2_pk8500_a2n = cab2_pk8500_a2 / cab2_pk8500_a0;
+
+cab2_lpf_w = 2 * pi * 5350 / srate;
+cab2_lpf_cos = cos(cab2_lpf_w);
+cab2_lpf_sin = sin(cab2_lpf_w);
+cab2_lpf_alpha = cab2_lpf_sin / (2 * 0.8);
+cab2_lpf_b0 = (1 - cab2_lpf_cos) / 2;
+cab2_lpf_b1 = 1 - cab2_lpf_cos;
+cab2_lpf_b2 = (1 - cab2_lpf_cos) / 2;
+cab2_lpf_a0 = 1 + cab2_lpf_alpha;
+cab2_lpf_a1 = -2 * cab2_lpf_cos;
+cab2_lpf_a2 = 1 - cab2_lpf_alpha;
+cab2_lpf_b0n = cab2_lpf_b0 / cab2_lpf_a0;
+cab2_lpf_b1n = cab2_lpf_b1 / cab2_lpf_a0;
+cab2_lpf_b2n = cab2_lpf_b2 / cab2_lpf_a0;
+cab2_lpf_a1n = cab2_lpf_a1 / cab2_lpf_a0;
+cab2_lpf_a2n = cab2_lpf_a2 / cab2_lpf_a0;
+
+// Cab3 coefficients
+cab3_hpf_w = 2 * pi * 75 / srate;
+cab3_hpf_cos = cos(cab3_hpf_w);
+cab3_hpf_sin = sin(cab3_hpf_w);
+cab3_hpf_alpha = cab3_hpf_sin / (2 * 0.7);
+cab3_hpf_b0 = (1 + cab3_hpf_cos) / 2;
+cab3_hpf_b1 = -(1 + cab3_hpf_cos);
+cab3_hpf_b2 = (1 + cab3_hpf_cos) / 2;
+cab3_hpf_a0 = 1 + cab3_hpf_alpha;
+cab3_hpf_a1 = -2 * cab3_hpf_cos;
+cab3_hpf_a2 = 1 - cab3_hpf_alpha;
+cab3_hpf_b0n = cab3_hpf_b0 / cab3_hpf_a0;
+cab3_hpf_b1n = cab3_hpf_b1 / cab3_hpf_a0;
+cab3_hpf_b2n = cab3_hpf_b2 / cab3_hpf_a0;
+cab3_hpf_a1n = cab3_hpf_a1 / cab3_hpf_a0;
+cab3_hpf_a2n = cab3_hpf_a2 / cab3_hpf_a0;
+
+cab3_pk173_w = 2 * pi * 173 / srate;
+cab3_pk173_cos = cos(cab3_pk173_w);
+cab3_pk173_sin = sin(cab3_pk173_w);
+cab3_pk173_A = 10 ^ (2.0 / 40);
+cab3_pk173_alpha = cab3_pk173_sin / (2 * 2.6);
+cab3_pk173_b0 = 1 + cab3_pk173_alpha * cab3_pk173_A;
+cab3_pk173_b1 = -2 * cab3_pk173_cos;
+cab3_pk173_b2 = 1 - cab3_pk173_alpha * cab3_pk173_A;
+cab3_pk173_a0 = 1 + cab3_pk173_alpha / cab3_pk173_A;
+cab3_pk173_a1 = -2 * cab3_pk173_cos;
+cab3_pk173_a2 = 1 - cab3_pk173_alpha / cab3_pk173_A;
+cab3_pk173_b0n = cab3_pk173_b0 / cab3_pk173_a0;
+cab3_pk173_b1n = cab3_pk173_b1 / cab3_pk173_a0;
+cab3_pk173_b2n = cab3_pk173_b2 / cab3_pk173_a0;
+cab3_pk173_a1n = cab3_pk173_a1 / cab3_pk173_a0;
+cab3_pk173_a2n = cab3_pk173_a2 / cab3_pk173_a0;
+
+cab3_pk245_w = 2 * pi * 245 / srate;
+cab3_pk245_cos = cos(cab3_pk245_w);
+cab3_pk245_sin = sin(cab3_pk245_w);
+cab3_pk245_A = 10 ^ (4.5 / 40);
+cab3_pk245_alpha = cab3_pk245_sin / (2 * 0.3);
+cab3_pk245_b0 = 1 + cab3_pk245_alpha * cab3_pk245_A;
+cab3_pk245_b1 = -2 * cab3_pk245_cos;
+cab3_pk245_b2 = 1 - cab3_pk245_alpha * cab3_pk245_A;
+cab3_pk245_a0 = 1 + cab3_pk245_alpha / cab3_pk245_A;
+cab3_pk245_a1 = -2 * cab3_pk245_cos;
+cab3_pk245_a2 = 1 - cab3_pk245_alpha / cab3_pk245_A;
+cab3_pk245_b0n = cab3_pk245_b0 / cab3_pk245_a0;
+cab3_pk245_b1n = cab3_pk245_b1 / cab3_pk245_a0;
+cab3_pk245_b2n = cab3_pk245_b2 / cab3_pk245_a0;
+cab3_pk245_a1n = cab3_pk245_a1 / cab3_pk245_a0;
+cab3_pk245_a2n = cab3_pk245_a2 / cab3_pk245_a0;
+
+cab3_pk354_w = 2 * pi * 354 / srate;
+cab3_pk354_cos = cos(cab3_pk354_w);
+cab3_pk354_sin = sin(cab3_pk354_w);
+cab3_pk354_A = 10 ^ (-2.0 / 40);
+cab3_pk354_alpha = cab3_pk354_sin / (2 * 3.1);
+cab3_pk354_b0 = 1 + cab3_pk354_alpha * cab3_pk354_A;
+cab3_pk354_b1 = -2 * cab3_pk354_cos;
+cab3_pk354_b2 = 1 - cab3_pk354_alpha * cab3_pk354_A;
+cab3_pk354_a0 = 1 + cab3_pk354_alpha / cab3_pk354_A;
+cab3_pk354_a1 = -2 * cab3_pk354_cos;
+cab3_pk354_a2 = 1 - cab3_pk354_alpha / cab3_pk354_A;
+cab3_pk354_b0n = cab3_pk354_b0 / cab3_pk354_a0;
+cab3_pk354_b1n = cab3_pk354_b1 / cab3_pk354_a0;
+cab3_pk354_b2n = cab3_pk354_b2 / cab3_pk354_a0;
+cab3_pk354_a1n = cab3_pk354_a1 / cab3_pk354_a0;
+cab3_pk354_a2n = cab3_pk354_a2 / cab3_pk354_a0;
+
+cab3_pk581_w = 2 * pi * 581 / srate;
+cab3_pk581_cos = cos(cab3_pk581_w);
+cab3_pk581_sin = sin(cab3_pk581_w);
+cab3_pk581_A = 10 ^ (-6.0 / 40);
+cab3_pk581_alpha = cab3_pk581_sin / (2 * 5.8);
+cab3_pk581_b0 = 1 + cab3_pk581_alpha * cab3_pk581_A;
+cab3_pk581_b1 = -2 * cab3_pk581_cos;
+cab3_pk581_b2 = 1 - cab3_pk581_alpha * cab3_pk581_A;
+cab3_pk581_a0 = 1 + cab3_pk581_alpha / cab3_pk581_A;
+cab3_pk581_a1 = -2 * cab3_pk581_cos;
+cab3_pk581_a2 = 1 - cab3_pk581_alpha / cab3_pk581_A;
+cab3_pk581_b0n = cab3_pk581_b0 / cab3_pk581_a0;
+cab3_pk581_b1n = cab3_pk581_b1 / cab3_pk581_a0;
+cab3_pk581_b2n = cab3_pk581_b2 / cab3_pk581_a0;
+cab3_pk581_a1n = cab3_pk581_a1 / cab3_pk581_a0;
+cab3_pk581_a2n = cab3_pk581_a2 / cab3_pk581_a0;
+
+cab3_pk1246_w = 2 * pi * 1246 / srate;
+cab3_pk1246_cos = cos(cab3_pk1246_w);
+cab3_pk1246_sin = sin(cab3_pk1246_w);
+cab3_pk1246_A = 10 ^ (2.3 / 40);
+cab3_pk1246_alpha = cab3_pk1246_sin / (2 * 8.4);
+cab3_pk1246_b0 = 1 + cab3_pk1246_alpha * cab3_pk1246_A;
+cab3_pk1246_b1 = -2 * cab3_pk1246_cos;
+cab3_pk1246_b2 = 1 - cab3_pk1246_alpha * cab3_pk1246_A;
+cab3_pk1246_a0 = 1 + cab3_pk1246_alpha / cab3_pk1246_A;
+cab3_pk1246_a1 = -2 * cab3_pk1246_cos;
+cab3_pk1246_a2 = 1 - cab3_pk1246_alpha / cab3_pk1246_A;
+cab3_pk1246_b0n = cab3_pk1246_b0 / cab3_pk1246_a0;
+cab3_pk1246_b1n = cab3_pk1246_b1 / cab3_pk1246_a0;
+cab3_pk1246_b2n = cab3_pk1246_b2 / cab3_pk1246_a0;
+cab3_pk1246_a1n = cab3_pk1246_a1 / cab3_pk1246_a0;
+cab3_pk1246_a2n = cab3_pk1246_a2 / cab3_pk1246_a0;
+
+cab3_pk1841_w = 2 * pi * 1841 / srate;
+cab3_pk1841_cos = cos(cab3_pk1841_w);
+cab3_pk1841_sin = sin(cab3_pk1841_w);
+cab3_pk1841_A = 10 ^ (-2.5 / 40);
+cab3_pk1841_alpha = cab3_pk1841_sin / (2 * 10.0);
+cab3_pk1841_b0 = 1 + cab3_pk1841_alpha * cab3_pk1841_A;
+cab3_pk1841_b1 = -2 * cab3_pk1841_cos;
+cab3_pk1841_b2 = 1 - cab3_pk1841_alpha * cab3_pk1841_A;
+cab3_pk1841_a0 = 1 + cab3_pk1841_alpha / cab3_pk1841_A;
+cab3_pk1841_a1 = -2 * cab3_pk1841_cos;
+cab3_pk1841_a2 = 1 - cab3_pk1841_alpha / cab3_pk1841_A;
+cab3_pk1841_b0n = cab3_pk1841_b0 / cab3_pk1841_a0;
+cab3_pk1841_b1n = cab3_pk1841_b1 / cab3_pk1841_a0;
+cab3_pk1841_b2n = cab3_pk1841_b2 / cab3_pk1841_a0;
+cab3_pk1841_a1n = cab3_pk1841_a1 / cab3_pk1841_a0;
+cab3_pk1841_a2n = cab3_pk1841_a2 / cab3_pk1841_a0;
+
+cab3_pk1864_w = 2 * pi * 1864 / srate;
+cab3_pk1864_cos = cos(cab3_pk1864_w);
+cab3_pk1864_sin = sin(cab3_pk1864_w);
+cab3_pk1864_A = 10 ^ (3.5 / 40);
+cab3_pk1864_alpha = cab3_pk1864_sin / (2 * 1.6);
+cab3_pk1864_b0 = 1 + cab3_pk1864_alpha * cab3_pk1864_A;
+cab3_pk1864_b1 = -2 * cab3_pk1864_cos;
+cab3_pk1864_b2 = 1 - cab3_pk1864_alpha * cab3_pk1864_A;
+cab3_pk1864_a0 = 1 + cab3_pk1864_alpha / cab3_pk1864_A;
+cab3_pk1864_a1 = -2 * cab3_pk1864_cos;
+cab3_pk1864_a2 = 1 - cab3_pk1864_alpha / cab3_pk1864_A;
+cab3_pk1864_b0n = cab3_pk1864_b0 / cab3_pk1864_a0;
+cab3_pk1864_b1n = cab3_pk1864_b1 / cab3_pk1864_a0;
+cab3_pk1864_b2n = cab3_pk1864_b2 / cab3_pk1864_a0;
+cab3_pk1864_a1n = cab3_pk1864_a1 / cab3_pk1864_a0;
+cab3_pk1864_a2n = cab3_pk1864_a2 / cab3_pk1864_a0;
+
+cab3_pk2167_w = 2 * pi * 2167 / srate;
+cab3_pk2167_cos = cos(cab3_pk2167_w);
+cab3_pk2167_sin = sin(cab3_pk2167_w);
+cab3_pk2167_A = 10 ^ (3.0 / 40);
+cab3_pk2167_alpha = cab3_pk2167_sin / (2 * 7.7);
+cab3_pk2167_b0 = 1 + cab3_pk2167_alpha * cab3_pk2167_A;
+cab3_pk2167_b1 = -2 * cab3_pk2167_cos;
+cab3_pk2167_b2 = 1 - cab3_pk2167_alpha * cab3_pk2167_A;
+cab3_pk2167_a0 = 1 + cab3_pk2167_alpha / cab3_pk2167_A;
+cab3_pk2167_a1 = -2 * cab3_pk2167_cos;
+cab3_pk2167_a2 = 1 - cab3_pk2167_alpha / cab3_pk2167_A;
+cab3_pk2167_b0n = cab3_pk2167_b0 / cab3_pk2167_a0;
+cab3_pk2167_b1n = cab3_pk2167_b1 / cab3_pk2167_a0;
+cab3_pk2167_b2n = cab3_pk2167_b2 / cab3_pk2167_a0;
+cab3_pk2167_a1n = cab3_pk2167_a1 / cab3_pk2167_a0;
+cab3_pk2167_a2n = cab3_pk2167_a2 / cab3_pk2167_a0;
+
+cab3_pk2800_w = 2 * pi * 2800 / srate;
+cab3_pk2800_cos = cos(cab3_pk2800_w);
+cab3_pk2800_sin = sin(cab3_pk2800_w);
+cab3_pk2800_A = 10 ^ (-2.5 / 40);
+cab3_pk2800_alpha = cab3_pk2800_sin / (2 * 9.9);
+cab3_pk2800_b0 = 1 + cab3_pk2800_alpha * cab3_pk2800_A;
+cab3_pk2800_b1 = -2 * cab3_pk2800_cos;
+cab3_pk2800_b2 = 1 - cab3_pk2800_alpha * cab3_pk2800_A;
+cab3_pk2800_a0 = 1 + cab3_pk2800_alpha / cab3_pk2800_A;
+cab3_pk2800_a1 = -2 * cab3_pk2800_cos;
+cab3_pk2800_a2 = 1 - cab3_pk2800_alpha / cab3_pk2800_A;
+cab3_pk2800_b0n = cab3_pk2800_b0 / cab3_pk2800_a0;
+cab3_pk2800_b1n = cab3_pk2800_b1 / cab3_pk2800_a0;
+cab3_pk2800_b2n = cab3_pk2800_b2 / cab3_pk2800_a0;
+cab3_pk2800_a1n = cab3_pk2800_a1 / cab3_pk2800_a0;
+cab3_pk2800_a2n = cab3_pk2800_a2 / cab3_pk2800_a0;
+
+cab3_pk3200_w = 2 * pi * 3200 / srate;
+cab3_pk3200_cos = cos(cab3_pk3200_w);
+cab3_pk3200_sin = sin(cab3_pk3200_w);
+cab3_pk3200_A = 10 ^ (3.0 / 40);
+cab3_pk3200_alpha = cab3_pk3200_sin / (2 * 1.8);
+cab3_pk3200_b0 = 1 + cab3_pk3200_alpha * cab3_pk3200_A;
+cab3_pk3200_b1 = -2 * cab3_pk3200_cos;
+cab3_pk3200_b2 = 1 - cab3_pk3200_alpha * cab3_pk3200_A;
+cab3_pk3200_a0 = 1 + cab3_pk3200_alpha / cab3_pk3200_A;
+cab3_pk3200_a1 = -2 * cab3_pk3200_cos;
+cab3_pk3200_a2 = 1 - cab3_pk3200_alpha / cab3_pk3200_A;
+cab3_pk3200_b0n = cab3_pk3200_b0 / cab3_pk3200_a0;
+cab3_pk3200_b1n = cab3_pk3200_b1 / cab3_pk3200_a0;
+cab3_pk3200_b2n = cab3_pk3200_b2 / cab3_pk3200_a0;
+cab3_pk3200_a1n = cab3_pk3200_a1 / cab3_pk3200_a0;
+cab3_pk3200_a2n = cab3_pk3200_a2 / cab3_pk3200_a0;
+
+cab3_pk6500_w = 2 * pi * 6500 / srate;
+cab3_pk6500_cos = cos(cab3_pk6500_w);
+cab3_pk6500_sin = sin(cab3_pk6500_w);
+cab3_pk6500_A = 10 ^ (-5.8 / 40);
+cab3_pk6500_alpha = cab3_pk6500_sin / (2 * 11.9);
+cab3_pk6500_b0 = 1 + cab3_pk6500_alpha * cab3_pk6500_A;
+cab3_pk6500_b1 = -2 * cab3_pk6500_cos;
+cab3_pk6500_b2 = 1 - cab3_pk6500_alpha * cab3_pk6500_A;
+cab3_pk6500_a0 = 1 + cab3_pk6500_alpha / cab3_pk6500_A;
+cab3_pk6500_a1 = -2 * cab3_pk6500_cos;
+cab3_pk6500_a2 = 1 - cab3_pk6500_alpha / cab3_pk6500_A;
+cab3_pk6500_b0n = cab3_pk6500_b0 / cab3_pk6500_a0;
+cab3_pk6500_b1n = cab3_pk6500_b1 / cab3_pk6500_a0;
+cab3_pk6500_b2n = cab3_pk6500_b2 / cab3_pk6500_a0;
+cab3_pk6500_a1n = cab3_pk6500_a1 / cab3_pk6500_a0;
+cab3_pk6500_a2n = cab3_pk6500_a2 / cab3_pk6500_a0;
+
+cab3_pk7858_w = 2 * pi * 7858 / srate;
+cab3_pk7858_cos = cos(cab3_pk7858_w);
+cab3_pk7858_sin = sin(cab3_pk7858_w);
+cab3_pk7858_A = 10 ^ (-4.0 / 40);
+cab3_pk7858_alpha = cab3_pk7858_sin / (2 * 10.0);
+cab3_pk7858_b0 = 1 + cab3_pk7858_alpha * cab3_pk7858_A;
+cab3_pk7858_b1 = -2 * cab3_pk7858_cos;
+cab3_pk7858_b2 = 1 - cab3_pk7858_alpha * cab3_pk7858_A;
+cab3_pk7858_a0 = 1 + cab3_pk7858_alpha / cab3_pk7858_A;
+cab3_pk7858_a1 = -2 * cab3_pk7858_cos;
+cab3_pk7858_a2 = 1 - cab3_pk7858_alpha / cab3_pk7858_A;
+cab3_pk7858_b0n = cab3_pk7858_b0 / cab3_pk7858_a0;
+cab3_pk7858_b1n = cab3_pk7858_b1 / cab3_pk7858_a0;
+cab3_pk7858_b2n = cab3_pk7858_b2 / cab3_pk7858_a0;
+cab3_pk7858_a1n = cab3_pk7858_a1 / cab3_pk7858_a0;
+cab3_pk7858_a2n = cab3_pk7858_a2 / cab3_pk7858_a0;
+
+cab3_lpf_w = 2 * pi * 5500 / srate;
+cab3_lpf_cos = cos(cab3_lpf_w);
+cab3_lpf_sin = sin(cab3_lpf_w);
+cab3_lpf_alpha = cab3_lpf_sin / (2 * 0.7);
+cab3_lpf_b0 = (1 - cab3_lpf_cos) / 2;
+cab3_lpf_b1 = 1 - cab3_lpf_cos;
+cab3_lpf_b2 = (1 - cab3_lpf_cos) / 2;
+cab3_lpf_a0 = 1 + cab3_lpf_alpha;
+cab3_lpf_a1 = -2 * cab3_lpf_cos;
+cab3_lpf_a2 = 1 - cab3_lpf_alpha;
+cab3_lpf_b0n = cab3_lpf_b0 / cab3_lpf_a0;
+cab3_lpf_b1n = cab3_lpf_b1 / cab3_lpf_a0;
+cab3_lpf_b2n = cab3_lpf_b2 / cab3_lpf_a0;
+cab3_lpf_a1n = cab3_lpf_a1 / cab3_lpf_a0;
+cab3_lpf_a2n = cab3_lpf_a2 / cab3_lpf_a0;
+
+cab3_pk11000_w = 2 * pi * 11000 / srate;
+cab3_pk11000_cos = cos(cab3_pk11000_w);
+cab3_pk11000_sin = sin(cab3_pk11000_w);
+cab3_pk11000_A = 10 ^ (-3.8 / 40);
+cab3_pk11000_alpha = cab3_pk11000_sin / (2 * 11.0);
+cab3_pk11000_b0 = 1 + cab3_pk11000_alpha * cab3_pk11000_A;
+cab3_pk11000_b1 = -2 * cab3_pk11000_cos;
+cab3_pk11000_b2 = 1 - cab3_pk11000_alpha * cab3_pk11000_A;
+cab3_pk11000_a0 = 1 + cab3_pk11000_alpha / cab3_pk11000_A;
+cab3_pk11000_a1 = -2 * cab3_pk11000_cos;
+cab3_pk11000_a2 = 1 - cab3_pk11000_alpha / cab3_pk11000_A;
+cab3_pk11000_b0n = cab3_pk11000_b0 / cab3_pk11000_a0;
+cab3_pk11000_b1n = cab3_pk11000_b1 / cab3_pk11000_a0;
+cab3_pk11000_b2n = cab3_pk11000_b2 / cab3_pk11000_a0;
+cab3_pk11000_a1n = cab3_pk11000_a1 / cab3_pk11000_a0;
+cab3_pk11000_a2n = cab3_pk11000_a2 / cab3_pk11000_a0;
+
+// Mid EQ coefficients
+mid_hpf_w = 2 * pi * 60 / srate;
+mid_hpf_cos = cos(mid_hpf_w);
+mid_hpf_sin = sin(mid_hpf_w);
+mid_hpf_alpha = mid_hpf_sin / (2 * 0.71);
+mid_hpf_b0 = (1 + mid_hpf_cos) / 2;
+mid_hpf_b1 = -(1 + mid_hpf_cos);
+mid_hpf_b2 = (1 + mid_hpf_cos) / 2;
+mid_hpf_a0 = 1 + mid_hpf_alpha;
+mid_hpf_a1 = -2 * mid_hpf_cos;
+mid_hpf_a2 = 1 - mid_hpf_alpha;
+mid_hpf_b0n = mid_hpf_b0 / mid_hpf_a0;
+mid_hpf_b1n = mid_hpf_b1 / mid_hpf_a0;
+mid_hpf_b2n = mid_hpf_b2 / mid_hpf_a0;
+mid_hpf_a1n = mid_hpf_a1 / mid_hpf_a0;
+mid_hpf_a2n = mid_hpf_a2 / mid_hpf_a0;
+
+mid_ls120_w = 2 * pi * 120 / srate;
+mid_ls120_cos = cos(mid_ls120_w);
+mid_ls120_sin = sin(mid_ls120_w);
+mid_ls120_A = 10 ^ (6.0 / 40);
+mid_ls120_alpha = mid_ls120_sin / (2 * 1.3);
+mid_ls120_sqrtA = sqrt(mid_ls120_A);
+mid_ls120_b0 = mid_ls120_A * ((mid_ls120_A + 1) - (mid_ls120_A - 1) * mid_ls120_cos + 2 * mid_ls120_sqrtA * mid_ls120_alpha);
+mid_ls120_b1 = 2 * mid_ls120_A * ((mid_ls120_A - 1) - (mid_ls120_A + 1) * mid_ls120_cos);
+mid_ls120_b2 = mid_ls120_A * ((mid_ls120_A + 1) - (mid_ls120_A - 1) * mid_ls120_cos - 2 * mid_ls120_sqrtA * mid_ls120_alpha);
+mid_ls120_a0 = (mid_ls120_A + 1) + (mid_ls120_A - 1) * mid_ls120_cos + 2 * mid_ls120_sqrtA * mid_ls120_alpha;
+mid_ls120_a1 = -2 * ((mid_ls120_A - 1) + (mid_ls120_A + 1) * mid_ls120_cos);
+mid_ls120_a2 = (mid_ls120_A + 1) + (mid_ls120_A - 1) * mid_ls120_cos - 2 * mid_ls120_sqrtA * mid_ls120_alpha;
+mid_ls120_b0n = mid_ls120_b0 / mid_ls120_a0;
+mid_ls120_b1n = mid_ls120_b1 / mid_ls120_a0;
+mid_ls120_b2n = mid_ls120_b2 / mid_ls120_a0;
+mid_ls120_a1n = mid_ls120_a1 / mid_ls120_a0;
+mid_ls120_a2n = mid_ls120_a2 / mid_ls120_a0;
+
+mid_pk90_w = 2 * pi * 90.5 / srate;
+mid_pk90_cos = cos(mid_pk90_w);
+mid_pk90_sin = sin(mid_pk90_w);
+mid_pk90_A = 10 ^ (6.0 / 40);
+mid_pk90_alpha = mid_pk90_sin / (2 * 0.6);
+mid_pk90_b0 = 1 + mid_pk90_alpha * mid_pk90_A;
+mid_pk90_b1 = -2 * mid_pk90_cos;
+mid_pk90_b2 = 1 - mid_pk90_alpha * mid_pk90_A;
+mid_pk90_a0 = 1 + mid_pk90_alpha / mid_pk90_A;
+mid_pk90_a1 = -2 * mid_pk90_cos;
+mid_pk90_a2 = 1 - mid_pk90_alpha / mid_pk90_A;
+mid_pk90_b0n = mid_pk90_b0 / mid_pk90_a0;
+mid_pk90_b1n = mid_pk90_b1 / mid_pk90_a0;
+mid_pk90_b2n = mid_pk90_b2 / mid_pk90_a0;
+mid_pk90_a1n = mid_pk90_a1 / mid_pk90_a0;
+mid_pk90_a2n = mid_pk90_a2 / mid_pk90_a0;
+
+mid_pk364_w = 2 * pi * 364 / srate;
+mid_pk364_cos = cos(mid_pk364_w);
+mid_pk364_sin = sin(mid_pk364_w);
+mid_pk364_A = 10 ^ (1.3 / 40);
+mid_pk364_alpha = mid_pk364_sin / (2 * 0.6);
+mid_pk364_b0 = 1 + mid_pk364_alpha * mid_pk364_A;
+mid_pk364_b1 = -2 * mid_pk364_cos;
+mid_pk364_b2 = 1 - mid_pk364_alpha * mid_pk364_A;
+mid_pk364_a0 = 1 + mid_pk364_alpha / mid_pk364_A;
+mid_pk364_a1 = -2 * mid_pk364_cos;
+mid_pk364_a2 = 1 - mid_pk364_alpha / mid_pk364_A;
+mid_pk364_b0n = mid_pk364_b0 / mid_pk364_a0;
+mid_pk364_b1n = mid_pk364_b1 / mid_pk364_a0;
+mid_pk364_b2n = mid_pk364_b2 / mid_pk364_a0;
+mid_pk364_a1n = mid_pk364_a1 / mid_pk364_a0;
+mid_pk364_a2n = mid_pk364_a2 / mid_pk364_a0;
+
+mid_pk850_w = 2 * pi * 850 / srate;
+mid_pk850_cos = cos(mid_pk850_w);
+mid_pk850_sin = sin(mid_pk850_w);
+mid_pk850_A = 10 ^ (-3.0 / 40);
+mid_pk850_alpha = mid_pk850_sin / (2 * 0.35);
+mid_pk850_b0 = 1 + mid_pk850_alpha * mid_pk850_A;
+mid_pk850_b1 = -2 * mid_pk850_cos;
+mid_pk850_b2 = 1 - mid_pk850_alpha * mid_pk850_A;
+mid_pk850_a0 = 1 + mid_pk850_alpha / mid_pk850_A;
+mid_pk850_a1 = -2 * mid_pk850_cos;
+mid_pk850_a2 = 1 - mid_pk850_alpha / mid_pk850_A;
+mid_pk850_b0n = mid_pk850_b0 / mid_pk850_a0;
+mid_pk850_b1n = mid_pk850_b1 / mid_pk850_a0;
+mid_pk850_b2n = mid_pk850_b2 / mid_pk850_a0;
+mid_pk850_a1n = mid_pk850_a1 / mid_pk850_a0;
+mid_pk850_a2n = mid_pk850_a2 / mid_pk850_a0;
+
+mid_pk1320_w = 2 * pi * 1320 / srate;
+mid_pk1320_cos = cos(mid_pk1320_w);
+mid_pk1320_sin = sin(mid_pk1320_w);
+mid_pk1320_A = 10 ^ (1.5 / 40);
+mid_pk1320_alpha = mid_pk1320_sin / (2 * 0.75);
+mid_pk1320_b0 = 1 + mid_pk1320_alpha * mid_pk1320_A;
+mid_pk1320_b1 = -2 * mid_pk1320_cos;
+mid_pk1320_b2 = 1 - mid_pk1320_alpha * mid_pk1320_A;
+mid_pk1320_a0 = 1 + mid_pk1320_alpha / mid_pk1320_A;
+mid_pk1320_a1 = -2 * mid_pk1320_cos;
+mid_pk1320_a2 = 1 - mid_pk1320_alpha / mid_pk1320_A;
+mid_pk1320_b0n = mid_pk1320_b0 / mid_pk1320_a0;
+mid_pk1320_b1n = mid_pk1320_b1 / mid_pk1320_a0;
+mid_pk1320_b2n = mid_pk1320_b2 / mid_pk1320_a0;
+mid_pk1320_a1n = mid_pk1320_a1 / mid_pk1320_a0;
+mid_pk1320_a2n = mid_pk1320_a2 / mid_pk1320_a0;
+
+mid_pk7400_w = 2 * pi * 7400 / srate;
+mid_pk7400_cos = cos(mid_pk7400_w);
+mid_pk7400_sin = sin(mid_pk7400_w);
+mid_pk7400_A = 10 ^ (1.2 / 40);
+mid_pk7400_alpha = mid_pk7400_sin / (2 * 0.75);
+mid_pk7400_b0 = 1 + mid_pk7400_alpha * mid_pk7400_A;
+mid_pk7400_b1 = -2 * mid_pk7400_cos;
+mid_pk7400_b2 = 1 - mid_pk7400_alpha * mid_pk7400_A;
+mid_pk7400_a0 = 1 + mid_pk7400_alpha / mid_pk7400_A;
+mid_pk7400_a1 = -2 * mid_pk7400_cos;
+mid_pk7400_a2 = 1 - mid_pk7400_alpha / mid_pk7400_A;
+mid_pk7400_b0n = mid_pk7400_b0 / mid_pk7400_a0;
+mid_pk7400_b1n = mid_pk7400_b1 / mid_pk7400_a0;
+mid_pk7400_b2n = mid_pk7400_b2 / mid_pk7400_a0;
+mid_pk7400_a1n = mid_pk7400_a1 / mid_pk7400_a0;
+mid_pk7400_a2n = mid_pk7400_a2 / mid_pk7400_a0;
+
+
+
+@sample
+
+// V3 Noise Gate - lookahead + hysteresis + downward expander
+gate_enable ? (
+  // Write current audio to lookahead delay buffer
+  delayL[lookahead_wp] = spl0;
+  delayR[lookahead_wp] = spl1;
+  
+  // Envelope detection: 70% peak (instant attack, 50ms release) + 30% RMS
+  abs_in = max(abs(spl0), abs(spl1));
+  abs_in > gate_env ? gate_env = abs_in : gate_env = gate_env * (1 - gate_env_release) + abs_in * gate_env_release;
+  gate_rms = 0.001 * abs_in * abs_in + 0.999 * gate_rms;
+  env_combined = 0.7 * gate_env + 0.3 * sqrt(gate_rms);
+  
+  // Hysteresis state machine with dynamic hold
+  gate_state == 1 ? (
+    env_combined < gate_close_thresh ? (
+      gate_state = 0;
+      gate_hold_rem = floor(srate * (0.02 + 0.06 * min(1, gate_env / gate_open_thresh)));
+    );
+  ) : (
+    env_combined > gate_open_thresh ? (
+      gate_state = 1;
+    ) : (
+      gate_hold_rem > 0 ? gate_hold_rem -= 1;
+    );
+  );
+  
+  // Downward expander target gain
+  gate_state == 1 ? (
+    gate_target = 1;
+  ) : (
+    gate_hold_rem > 0 ? (
+      gate_target = gate_gain;
+    ) : (
+      env_combined > 0.00001 ? (
+        env_dB = 20 * log10(env_combined);
+        thresh_dB = 20 * log10(gate_open_thresh);
+        db_below = max(0, thresh_dB - env_dB);
+        reduction_dB = db_below * (gate_ratio - 1);
+        gate_target = 10 ^ (-reduction_dB / 20);
+        gate_target < gate_min_gain ? gate_target = gate_min_gain;
+      ) : gate_target = gate_min_gain;
+    );
+  );
+  
+  // Smooth gain transitions
+  gate_target > gate_gain ? (
+    gate_gain += (gate_target - gate_gain) * gate_gain_attack;
+  ) : (
+    gate_gain += (gate_target - gate_gain) * gate_gain_release;
+  );
+  gate_gain < gate_min_gain ? gate_gain = gate_min_gain;
+  
+  // Lookahead: read delayed audio and apply gain
+  lookahead_rp = lookahead_wp - gate_lookahead;
+  lookahead_rp < 0 ? lookahead_rp += max_lookahead;
+  spl0 = delayL[lookahead_rp] * gate_gain;
+  spl1 = delayR[lookahead_rp] * gate_gain;
+  
+  // Advance write pointer
+  lookahead_wp += 1;
+  lookahead_wp >= max_lookahead ? lookahead_wp = 0;
+);
+
+// Input Gain
+spl0 *= input_gain;
+spl1 *= input_gain;
+
+// Pre-EQ
+tmp = spl0;
+spl0 = hpf_b0n * tmp + hpf_b1n * hpf1_x1L + hpf_b2n * hpf1_x2L - hpf_a1n * hpf1_y1L - hpf_a2n * hpf1_y2L;
+hpf1_x2L = hpf1_x1L; hpf1_x1L = tmp; hpf1_y2L = hpf1_y1L; hpf1_y1L = spl0;
+tmp = spl1;
+spl1 = hpf_b0n * tmp + hpf_b1n * hpf1_x1R + hpf_b2n * hpf1_x2R - hpf_a1n * hpf1_y1R - hpf_a2n * hpf1_y2R;
+hpf1_x2R = hpf1_x1R; hpf1_x1R = tmp; hpf1_y2R = hpf1_y1R; hpf1_y1R = spl1;
+
+tmp = spl0;
+spl0 = hpf_b0n * tmp + hpf_b1n * hpf2_x1L + hpf_b2n * hpf2_x2L - hpf_a1n * hpf2_y1L - hpf_a2n * hpf2_y2L;
+hpf2_x2L = hpf2_x1L; hpf2_x1L = tmp; hpf2_y2L = hpf2_y1L; hpf2_y1L = spl0;
+tmp = spl1;
+spl1 = hpf_b0n * tmp + hpf_b1n * hpf2_x1R + hpf_b2n * hpf2_x2R - hpf_a1n * hpf2_y1R - hpf_a2n * hpf2_y2R;
+hpf2_x2R = hpf2_x1R; hpf2_x1R = tmp; hpf2_y2R = hpf2_y1R; hpf2_y1R = spl1;
+
+tmp = spl0;
+spl0 = hpf_b0n * tmp + hpf_b1n * hpf3_x1L + hpf_b2n * hpf3_x2L - hpf_a1n * hpf3_y1L - hpf_a2n * hpf3_y2L;
+hpf3_x2L = hpf3_x1L; hpf3_x1L = tmp; hpf3_y2L = hpf3_y1L; hpf3_y1L = spl0;
+tmp = spl1;
+spl1 = hpf_b0n * tmp + hpf_b1n * hpf3_x1R + hpf_b2n * hpf3_x2R - hpf_a1n * hpf3_y1R - hpf_a2n * hpf3_y2R;
+hpf3_x2R = hpf3_x1R; hpf3_x1R = tmp; hpf3_y2R = hpf3_y1R; hpf3_y1R = spl1;
+
+tmp = spl0;
+spl0 = hpf_b0n * tmp + hpf_b1n * hpf4_x1L + hpf_b2n * hpf4_x2L - hpf_a1n * hpf4_y1L - hpf_a2n * hpf4_y2L;
+hpf4_x2L = hpf4_x1L; hpf4_x1L = tmp; hpf4_y2L = hpf4_y1L; hpf4_y1L = spl0;
+tmp = spl1;
+spl1 = hpf_b0n * tmp + hpf_b1n * hpf4_x1R + hpf_b2n * hpf4_x2R - hpf_a1n * hpf4_y1R - hpf_a2n * hpf4_y2R;
+hpf4_x2R = hpf4_x1R; hpf4_x1R = tmp; hpf4_y2R = hpf4_y1R; hpf4_y1R = spl1;
+
+tmp = spl0;
+spl0 = pk95_b0n * tmp + pk95_b1n * pk95_x1L + pk95_b2n * pk95_x2L - pk95_a1n * pk95_y1L - pk95_a2n * pk95_y2L;
+pk95_x2L = pk95_x1L; pk95_x1L = tmp; pk95_y2L = pk95_y1L; pk95_y1L = spl0;
+tmp = spl1;
+spl1 = pk95_b0n * tmp + pk95_b1n * pk95_x1R + pk95_b2n * pk95_x2R - pk95_a1n * pk95_y1R - pk95_a2n * pk95_y2R;
+pk95_x2R = pk95_x1R; pk95_x1R = tmp; pk95_y2R = pk95_y1R; pk95_y1R = spl1;
+
+tmp = spl0;
+spl0 = sh108_b0n * tmp + sh108_b1n * sh108_x1L + sh108_b2n * sh108_x2L - sh108_a1n * sh108_y1L - sh108_a2n * sh108_y2L;
+sh108_x2L = sh108_x1L; sh108_x1L = tmp; sh108_y2L = sh108_y1L; sh108_y1L = spl0;
+tmp = spl1;
+spl1 = sh108_b0n * tmp + sh108_b1n * sh108_x1R + sh108_b2n * sh108_x2R - sh108_a1n * sh108_y1R - sh108_a2n * sh108_y2R;
+sh108_x2R = sh108_x1R; sh108_x1R = tmp; sh108_y2R = sh108_y1R; sh108_y1R = spl1;
+
+tmp = spl0;
+spl0 = pk291_b0n * tmp + pk291_b1n * pk291_x1L + pk291_b2n * pk291_x2L - pk291_a1n * pk291_y1L - pk291_a2n * pk291_y2L;
+pk291_x2L = pk291_x1L; pk291_x1L = tmp; pk291_y2L = pk291_y1L; pk291_y1L = spl0;
+tmp = spl1;
+spl1 = pk291_b0n * tmp + pk291_b1n * pk291_x1R + pk291_b2n * pk291_x2R - pk291_a1n * pk291_y1R - pk291_a2n * pk291_y2R;
+pk291_x2R = pk291_x1R; pk291_x1R = tmp; pk291_y2R = pk291_y1R; pk291_y1R = spl1;
+
+tmp = spl0;
+spl0 = pk120_b0n * tmp + pk120_b1n * pk120_x1L + pk120_b2n * pk120_x2L - pk120_a1n * pk120_y1L - pk120_a2n * pk120_y2L;
+pk120_x2L = pk120_x1L; pk120_x1L = tmp; pk120_y2L = pk120_y1L; pk120_y1L = spl0;
+tmp = spl1;
+spl1 = pk120_b0n * tmp + pk120_b1n * pk120_x1R + pk120_b2n * pk120_x2R - pk120_a1n * pk120_y1R - pk120_a2n * pk120_y2R;
+pk120_x2R = pk120_x1R; pk120_x1R = tmp; pk120_y2R = pk120_y1R; pk120_y1R = spl1;
+
+tmp = spl0;
+spl0 = pk2k_b0n * tmp + pk2k_b1n * pk2k_x1L + pk2k_b2n * pk2k_x2L - pk2k_a1n * pk2k_y1L - pk2k_a2n * pk2k_y2L;
+pk2k_x2L = pk2k_x1L; pk2k_x1L = tmp; pk2k_y2L = pk2k_y1L; pk2k_y1L = spl0;
+tmp = spl1;
+spl1 = pk2k_b0n * tmp + pk2k_b1n * pk2k_x1R + pk2k_b2n * pk2k_x2R - pk2k_a1n * pk2k_y1R - pk2k_a2n * pk2k_y2R;
+pk2k_x2R = pk2k_x1R; pk2k_x1R = tmp; pk2k_y2R = pk2k_y1R; pk2k_y1R = spl1;
+
+tmp = spl0;
+spl0 = lpf_b0n * tmp + lpf_b1n * lpf_x1L + lpf_b2n * lpf_x2L - lpf_a1n * lpf_y1L - lpf_a2n * lpf_y2L;
+lpf_x2L = lpf_x1L; lpf_x1L = tmp; lpf_y2L = lpf_y1L; lpf_y1L = spl0;
+tmp = spl1;
+spl1 = lpf_b0n * tmp + lpf_b1n * lpf_x1R + lpf_b2n * lpf_x2R - lpf_a1n * lpf_y1R - lpf_a2n * lpf_y2R;
+lpf_x2R = lpf_x1R; lpf_x1R = tmp; lpf_y2R = lpf_y1R; lpf_y1R = spl1;
+
+// --- Tube Stage 1 (Classic only) ---
+amp_mode == 0 ? (
+  spl0 = (spl0 * drive * 0.6) / (1 + abs(spl0 * drive * 0.6));
+  spl1 = (spl1 * drive * 0.6) / (1 + abs(spl1 * drive * 0.6));
+  spl0 *= 0.9;
+  spl1 *= 0.9;
+);
+
+// --- Bright Cap (shared) ---
+bright_cap > 0 ? (
+  bc_y1L = spl0 + bc_cutoff * (bc_y1L - spl0);
+  bc_y1R = spl1 + bc_cutoff * (bc_y1R - spl1);
+  spl0 = bc_y1L;
+  spl1 = bc_y1R;
+);
+
+// --- Distortion Core Switch ---
+amp_mode == 0 ? (
+  // Tube Stage 2
+  spl0 = (spl0 * drive * 0.8) / (1 + abs(spl0 * drive * 0.8)) - 0.06 * (spl0 * drive * 0.4) / (1 + abs(spl0 * drive * 0.4));
+  spl1 = (spl1 * drive * 0.8) / (1 + abs(spl1 * drive * 0.8)) - 0.06 * (spl1 * drive * 0.4) / (1 + abs(spl1 * drive * 0.4));
+  spl0 *= 0.85;
+  spl1 *= 0.85;
+
+  // Cold Clipper
+  spl0 = spl0 + 0.1;
+  spl1 = spl1 + 0.1;
+  spl0 >= 0 ? spl0 = (spl0 * 0.7) / (1 + abs(spl0 * 0.7)) : spl0 = (spl0 * 1.2) / (1 + abs(spl0 * 1.2));
+  spl1 >= 0 ? spl1 = (spl1 * 0.7) / (1 + abs(spl1 * 0.7)) : spl1 = (spl1 * 1.2) / (1 + abs(spl1 * 1.2));
+  spl0 = spl0 - 0.1;
+  spl1 = spl1 - 0.1;
+
+  spl0 *= 0.7;
+  spl1 *= 0.7;
+) : (
+  // Hard clipper chain
+  spl0 *= 3 * drive;
+  spl1 *= 3 * drive;
+
+  spl0 > 1 ? spl0 = 1; spl0 < -1 ? spl0 = -1;
+  spl1 > 1 ? spl1 = 1; spl1 < -1 ? spl1 = -1;
+  spl0 *= 2.5; spl1 *= 2.5;
+
+  spl0 > 1 ? spl0 = 1; spl0 < -1 ? spl0 = -1;
+  spl1 > 1 ? spl1 = 1; spl1 < -1 ? spl1 = -1;
+  spl0 *= 2; spl1 *= 2;
+
+  spl0 > 1 ? spl0 = 1; spl0 < -1 ? spl0 = -1;
+  spl1 > 1 ? spl1 = 1; spl1 < -1 ? spl1 = -1;
+
+  // Auto gain
+  auto_gain_env = (abs(spl0) + abs(spl1)) * 0.5 * 0.1 + auto_gain_env * 0.9;
+  auto_gain_env > 0.001 ? auto_gain = 1 / (auto_gain_env + 0.1) : auto_gain = 1;
+  spl0 *= auto_gain * 0.5;
+  spl1 *= auto_gain * 0.5;
+);
+
+// --- Tone Stack (shared) ---
+tmp = spl0;
+spl0 = ts_bass_b0n * tmp + ts_bass_b1n * ts_bass_x1L + ts_bass_b2n * ts_bass_x2L - ts_bass_a1n * ts_bass_y1L - ts_bass_a2n * ts_bass_y2L;
+ts_bass_x2L = ts_bass_x1L; ts_bass_x1L = tmp; ts_bass_y2L = ts_bass_y1L; ts_bass_y1L = spl0;
+tmp = spl1;
+spl1 = ts_bass_b0n * tmp + ts_bass_b1n * ts_bass_x1R + ts_bass_b2n * ts_bass_x2R - ts_bass_a1n * ts_bass_y1R - ts_bass_a2n * ts_bass_y2R;
+ts_bass_x2R = ts_bass_x1R; ts_bass_x1R = tmp; ts_bass_y2R = ts_bass_y1R; ts_bass_y1R = spl1;
+
+tmp = spl0;
+spl0 = ts_mid_b0n * tmp + ts_mid_b1n * ts_mid_x1L + ts_mid_b2n * ts_mid_x2L - ts_mid_a1n * ts_mid_y1L - ts_mid_a2n * ts_mid_y2L;
+ts_mid_x2L = ts_mid_x1L; ts_mid_x1L = tmp; ts_mid_y2L = ts_mid_y1L; ts_mid_y1L = spl0;
+tmp = spl1;
+spl1 = ts_mid_b0n * tmp + ts_mid_b1n * ts_mid_x1R + ts_mid_b2n * ts_mid_x2R - ts_mid_a1n * ts_mid_y1R - ts_mid_a2n * ts_mid_y2R;
+ts_mid_x2R = ts_mid_x1R; ts_mid_x1R = tmp; ts_mid_y2R = ts_mid_y1R; ts_mid_y1R = spl1;
+
+tmp = spl0;
+spl0 = ts_treb_b0n * tmp + ts_treb_b1n * ts_treb_x1L + ts_treb_b2n * ts_treb_x2L - ts_treb_a1n * ts_treb_y1L - ts_treb_a2n * ts_treb_y2L;
+ts_treb_x2L = ts_treb_x1L; ts_treb_x1L = tmp; ts_treb_y2L = ts_treb_y1L; ts_treb_y1L = spl0;
+tmp = spl1;
+spl1 = ts_treb_b0n * tmp + ts_treb_b1n * ts_treb_x1R + ts_treb_b2n * ts_treb_x2R - ts_treb_a1n * ts_treb_y1R - ts_treb_a2n * ts_treb_y2R;
+ts_treb_x2R = ts_treb_x1R; ts_treb_x1R = tmp; ts_treb_y2R = ts_treb_y1R; ts_treb_y1R = spl1;
+
+// --- Tube Stage 3 (Classic only) ---
+amp_mode == 0 ? (
+  spl0 = (spl0 * 0.8) / (1 + abs(spl0 * 0.8)) - 0.04 * (spl0 * 0.4) / (1 + abs(spl0 * 0.4));
+  spl1 = (spl1 * 0.8) / (1 + abs(spl1 * 0.8)) - 0.04 * (spl1 * 0.4) / (1 + abs(spl1 * 0.4));
+  spl0 *= 0.95;
+  spl1 *= 0.95;
+);
+
+// --- Presence (shared) ---
+tmp = spl0;
+spl0 = pres_b0n * tmp + pres_b1n * pres_x1L + pres_b2n * pres_x2L - pres_a1n * pres_y1L - pres_a2n * pres_y2L;
+pres_x2L = pres_x1L; pres_x1L = tmp; pres_y2L = pres_y1L; pres_y1L = spl0;
+tmp = spl1;
+spl1 = pres_b0n * tmp + pres_b1n * pres_x1R + pres_b2n * pres_x2R - pres_a1n * pres_y1R - pres_a2n * pres_y2R;
+pres_x2R = pres_x1R; pres_x1R = tmp; pres_y2R = pres_y1R; pres_y1R = spl1;
+
+// --- Power Amp (Classic only) ---
+amp_mode == 0 ? (
+  spl0 = (spl0 * 1.2) / (1 + abs(spl0 * 1.2));
+  spl1 = (spl1 * 1.2) / (1 + abs(spl1 * 1.2));
+);
+
+// --- Sag (shared) ---
+sag_env = max(abs(spl0), abs(spl1)) * sag_attack + sag_env * (1 - sag_attack);
+sag_target = 1 - (sag_env * sag_amount * 2);
+sag_target < 0.3 ? sag_target = 0.3;
+sag_gain = sag_gain * (1 - sag_release) + sag_target * sag_release;
+spl0 *= sag_gain;
+spl1 *= sag_gain;
+
+// --- Resonance (shared) ---
+tmp = spl0;
+spl0 = res_b0n * tmp + res_b1n * res_x1L + res_b2n * res_x2L - res_a1n * res_y1L - res_a2n * res_y2L;
+res_x2L = res_x1L; res_x1L = tmp; res_y2L = res_y1L; res_y1L = spl0;
+tmp = spl1;
+spl1 = res_b0n * tmp + res_b1n * res_x1R + res_b2n * res_x2R - res_a1n * res_y1R - res_a2n * res_y2R;
+res_x2R = res_x1R; res_x1R = tmp; res_y2R = res_y1R; res_y1R = spl1;
+
+// --- Mid EQ (shared) ---
+tmp = spl0;
+spl0 = mid_hpf_b0n * tmp + mid_hpf_b1n * mid_hpf_x1L + mid_hpf_b2n * mid_hpf_x2L - mid_hpf_a1n * mid_hpf_y1L - mid_hpf_a2n * mid_hpf_y2L;
+mid_hpf_x2L = mid_hpf_x1L; mid_hpf_x1L = tmp; mid_hpf_y2L = mid_hpf_y1L; mid_hpf_y1L = spl0;
+tmp = spl1;
+spl1 = mid_hpf_b0n * tmp + mid_hpf_b1n * mid_hpf_x1R + mid_hpf_b2n * mid_hpf_x2R - mid_hpf_a1n * mid_hpf_y1R - mid_hpf_a2n * mid_hpf_y2R;
+mid_hpf_x2R = mid_hpf_x1R; mid_hpf_x1R = tmp; mid_hpf_y2R = mid_hpf_y1R; mid_hpf_y1R = spl1;
+
+tmp = spl0;
+spl0 = mid_ls120_b0n * tmp + mid_ls120_b1n * mid_ls120_x1L + mid_ls120_b2n * mid_ls120_x2L - mid_ls120_a1n * mid_ls120_y1L - mid_ls120_a2n * mid_ls120_y2L;
+mid_ls120_x2L = mid_ls120_x1L; mid_ls120_x1L = tmp; mid_ls120_y2L = mid_ls120_y1L; mid_ls120_y1L = spl0;
+tmp = spl1;
+spl1 = mid_ls120_b0n * tmp + mid_ls120_b1n * mid_ls120_x1R + mid_ls120_b2n * mid_ls120_x2R - mid_ls120_a1n * mid_ls120_y1R - mid_ls120_a2n * mid_ls120_y2R;
+mid_ls120_x2R = mid_ls120_x1R; mid_ls120_x1R = tmp; mid_ls120_y2R = mid_ls120_y1R; mid_ls120_y1R = spl1;
+
+tmp = spl0;
+spl0 = mid_pk90_b0n * tmp + mid_pk90_b1n * mid_pk90_x1L + mid_pk90_b2n * mid_pk90_x2L - mid_pk90_a1n * mid_pk90_y1L - mid_pk90_a2n * mid_pk90_y2L;
+mid_pk90_x2L = mid_pk90_x1L; mid_pk90_x1L = tmp; mid_pk90_y2L = mid_pk90_y1L; mid_pk90_y1L = spl0;
+tmp = spl1;
+spl1 = mid_pk90_b0n * tmp + mid_pk90_b1n * mid_pk90_x1R + mid_pk90_b2n * mid_pk90_x2R - mid_pk90_a1n * mid_pk90_y1R - mid_pk90_a2n * mid_pk90_y2R;
+mid_pk90_x2R = mid_pk90_x1R; mid_pk90_x1R = tmp; mid_pk90_y2R = mid_pk90_y1R; mid_pk90_y1R = spl1;
+
+tmp = spl0;
+spl0 = mid_pk364_b0n * tmp + mid_pk364_b1n * mid_pk364_x1L + mid_pk364_b2n * mid_pk364_x2L - mid_pk364_a1n * mid_pk364_y1L - mid_pk364_a2n * mid_pk364_y2L;
+mid_pk364_x2L = mid_pk364_x1L; mid_pk364_x1L = tmp; mid_pk364_y2L = mid_pk364_y1L; mid_pk364_y1L = spl0;
+tmp = spl1;
+spl1 = mid_pk364_b0n * tmp + mid_pk364_b1n * mid_pk364_x1R + mid_pk364_b2n * mid_pk364_x2R - mid_pk364_a1n * mid_pk364_y1R - mid_pk364_a2n * mid_pk364_y2R;
+mid_pk364_x2R = mid_pk364_x1R; mid_pk364_x1R = tmp; mid_pk364_y2R = mid_pk364_y1R; mid_pk364_y1R = spl1;
+
+tmp = spl0;
+spl0 = mid_pk850_b0n * tmp + mid_pk850_b1n * mid_pk850_x1L + mid_pk850_b2n * mid_pk850_x2L - mid_pk850_a1n * mid_pk850_y1L - mid_pk850_a2n * mid_pk850_y2L;
+mid_pk850_x2L = mid_pk850_x1L; mid_pk850_x1L = tmp; mid_pk850_y2L = mid_pk850_y1L; mid_pk850_y1L = spl0;
+tmp = spl1;
+spl1 = mid_pk850_b0n * tmp + mid_pk850_b1n * mid_pk850_x1R + mid_pk850_b2n * mid_pk850_x2R - mid_pk850_a1n * mid_pk850_y1R - mid_pk850_a2n * mid_pk850_y2R;
+mid_pk850_x2R = mid_pk850_x1R; mid_pk850_x1R = tmp; mid_pk850_y2R = mid_pk850_y1R; mid_pk850_y1R = spl1;
+
+tmp = spl0;
+spl0 = mid_pk1320_b0n * tmp + mid_pk1320_b1n * mid_pk1320_x1L + mid_pk1320_b2n * mid_pk1320_x2L - mid_pk1320_a1n * mid_pk1320_y1L - mid_pk1320_a2n * mid_pk1320_y2L;
+mid_pk1320_x2L = mid_pk1320_x1L; mid_pk1320_x1L = tmp; mid_pk1320_y2L = mid_pk1320_y1L; mid_pk1320_y1L = spl0;
+tmp = spl1;
+spl1 = mid_pk1320_b0n * tmp + mid_pk1320_b1n * mid_pk1320_x1R + mid_pk1320_b2n * mid_pk1320_x2R - mid_pk1320_a1n * mid_pk1320_y1R - mid_pk1320_a2n * mid_pk1320_y2R;
+mid_pk1320_x2R = mid_pk1320_x1R; mid_pk1320_x1R = tmp; mid_pk1320_y2R = mid_pk1320_y1R; mid_pk1320_y1R = spl1;
+
+tmp = spl0;
+spl0 = mid_pk7400_b0n * tmp + mid_pk7400_b1n * mid_pk7400_x1L + mid_pk7400_b2n * mid_pk7400_x2L - mid_pk7400_a1n * mid_pk7400_y1L - mid_pk7400_a2n * mid_pk7400_y2L;
+mid_pk7400_x2L = mid_pk7400_x1L; mid_pk7400_x1L = tmp; mid_pk7400_y2L = mid_pk7400_y1L; mid_pk7400_y1L = spl0;
+tmp = spl1;
+spl1 = mid_pk7400_b0n * tmp + mid_pk7400_b1n * mid_pk7400_x1R + mid_pk7400_b2n * mid_pk7400_x2R - mid_pk7400_a1n * mid_pk7400_y1R - mid_pk7400_a2n * mid_pk7400_y2R;
+mid_pk7400_x2R = mid_pk7400_x1R; mid_pk7400_x1R = tmp; mid_pk7400_y2R = mid_pk7400_y1R; mid_pk7400_y1R = spl1;
+
+spl0 *= 0.7079;
+spl1 *= 0.7079;
+
+// Cab
+cab_select == 1 ? (
+  tmp = spl0;
+  spl0 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf1_x1L + cab1_hpf_b2n * cab1_hpf1_x2L - cab1_hpf_a1n * cab1_hpf1_y1L - cab1_hpf_a2n * cab1_hpf1_y2L;
+  cab1_hpf1_x2L = cab1_hpf1_x1L; cab1_hpf1_x1L = tmp; cab1_hpf1_y2L = cab1_hpf1_y1L; cab1_hpf1_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf1_x1R + cab1_hpf_b2n * cab1_hpf1_x2R - cab1_hpf_a1n * cab1_hpf1_y1R - cab1_hpf_a2n * cab1_hpf1_y2R;
+  cab1_hpf1_x2R = cab1_hpf1_x1R; cab1_hpf1_x1R = tmp; cab1_hpf1_y2R = cab1_hpf1_y1R; cab1_hpf1_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf2_x1L + cab1_hpf_b2n * cab1_hpf2_x2L - cab1_hpf_a1n * cab1_hpf2_y1L - cab1_hpf_a2n * cab1_hpf2_y2L;
+  cab1_hpf2_x2L = cab1_hpf2_x1L; cab1_hpf2_x1L = tmp; cab1_hpf2_y2L = cab1_hpf2_y1L; cab1_hpf2_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf2_x1R + cab1_hpf_b2n * cab1_hpf2_x2R - cab1_hpf_a1n * cab1_hpf2_y1R - cab1_hpf_a2n * cab1_hpf2_y2R;
+  cab1_hpf2_x2R = cab1_hpf2_x1R; cab1_hpf2_x1R = tmp; cab1_hpf2_y2R = cab1_hpf2_y1R; cab1_hpf2_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf3_x1L + cab1_hpf_b2n * cab1_hpf3_x2L - cab1_hpf_a1n * cab1_hpf3_y1L - cab1_hpf_a2n * cab1_hpf3_y2L;
+  cab1_hpf3_x2L = cab1_hpf3_x1L; cab1_hpf3_x1L = tmp; cab1_hpf3_y2L = cab1_hpf3_y1L; cab1_hpf3_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf3_x1R + cab1_hpf_b2n * cab1_hpf3_x2R - cab1_hpf_a1n * cab1_hpf3_y1R - cab1_hpf_a2n * cab1_hpf3_y2R;
+  cab1_hpf3_x2R = cab1_hpf3_x1R; cab1_hpf3_x1R = tmp; cab1_hpf3_y2R = cab1_hpf3_y1R; cab1_hpf3_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf4_x1L + cab1_hpf_b2n * cab1_hpf4_x2L - cab1_hpf_a1n * cab1_hpf4_y1L - cab1_hpf_a2n * cab1_hpf4_y2L;
+  cab1_hpf4_x2L = cab1_hpf4_x1L; cab1_hpf4_x1L = tmp; cab1_hpf4_y2L = cab1_hpf4_y1L; cab1_hpf4_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_hpf_b0n * tmp + cab1_hpf_b1n * cab1_hpf4_x1R + cab1_hpf_b2n * cab1_hpf4_x2R - cab1_hpf_a1n * cab1_hpf4_y1R - cab1_hpf_a2n * cab1_hpf4_y2R;
+  cab1_hpf4_x2R = cab1_hpf4_x1R; cab1_hpf4_x1R = tmp; cab1_hpf4_y2R = cab1_hpf4_y1R; cab1_hpf4_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk98_b0n * tmp + cab1_pk98_b1n * cab1_pk98_x1L + cab1_pk98_b2n * cab1_pk98_x2L - cab1_pk98_a1n * cab1_pk98_y1L - cab1_pk98_a2n * cab1_pk98_y2L;
+  cab1_pk98_x2L = cab1_pk98_x1L; cab1_pk98_x1L = tmp; cab1_pk98_y2L = cab1_pk98_y1L; cab1_pk98_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk98_b0n * tmp + cab1_pk98_b1n * cab1_pk98_x1R + cab1_pk98_b2n * cab1_pk98_x2R - cab1_pk98_a1n * cab1_pk98_y1R - cab1_pk98_a2n * cab1_pk98_y2R;
+  cab1_pk98_x2R = cab1_pk98_x1R; cab1_pk98_x1R = tmp; cab1_pk98_y2R = cab1_pk98_y1R; cab1_pk98_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk259_b0n * tmp + cab1_pk259_b1n * cab1_pk259_x1L + cab1_pk259_b2n * cab1_pk259_x2L - cab1_pk259_a1n * cab1_pk259_y1L - cab1_pk259_a2n * cab1_pk259_y2L;
+  cab1_pk259_x2L = cab1_pk259_x1L; cab1_pk259_x1L = tmp; cab1_pk259_y2L = cab1_pk259_y1L; cab1_pk259_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk259_b0n * tmp + cab1_pk259_b1n * cab1_pk259_x1R + cab1_pk259_b2n * cab1_pk259_x2R - cab1_pk259_a1n * cab1_pk259_y1R - cab1_pk259_a2n * cab1_pk259_y2R;
+  cab1_pk259_x2R = cab1_pk259_x1R; cab1_pk259_x1R = tmp; cab1_pk259_y2R = cab1_pk259_y1R; cab1_pk259_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk492_b0n * tmp + cab1_pk492_b1n * cab1_pk492_x1L + cab1_pk492_b2n * cab1_pk492_x2L - cab1_pk492_a1n * cab1_pk492_y1L - cab1_pk492_a2n * cab1_pk492_y2L;
+  cab1_pk492_x2L = cab1_pk492_x1L; cab1_pk492_x1L = tmp; cab1_pk492_y2L = cab1_pk492_y1L; cab1_pk492_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk492_b0n * tmp + cab1_pk492_b1n * cab1_pk492_x1R + cab1_pk492_b2n * cab1_pk492_x2R - cab1_pk492_a1n * cab1_pk492_y1R - cab1_pk492_a2n * cab1_pk492_y2R;
+  cab1_pk492_x2R = cab1_pk492_x1R; cab1_pk492_x1R = tmp; cab1_pk492_y2R = cab1_pk492_y1R; cab1_pk492_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk552_b0n * tmp + cab1_pk552_b1n * cab1_pk552_x1L + cab1_pk552_b2n * cab1_pk552_x2L - cab1_pk552_a1n * cab1_pk552_y1L - cab1_pk552_a2n * cab1_pk552_y2L;
+  cab1_pk552_x2L = cab1_pk552_x1L; cab1_pk552_x1L = tmp; cab1_pk552_y2L = cab1_pk552_y1L; cab1_pk552_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk552_b0n * tmp + cab1_pk552_b1n * cab1_pk552_x1R + cab1_pk552_b2n * cab1_pk552_x2R - cab1_pk552_a1n * cab1_pk552_y1R - cab1_pk552_a2n * cab1_pk552_y2R;
+  cab1_pk552_x2R = cab1_pk552_x1R; cab1_pk552_x1R = tmp; cab1_pk552_y2R = cab1_pk552_y1R; cab1_pk552_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk1515_b0n * tmp + cab1_pk1515_b1n * cab1_pk1515_x1L + cab1_pk1515_b2n * cab1_pk1515_x2L - cab1_pk1515_a1n * cab1_pk1515_y1L - cab1_pk1515_a2n * cab1_pk1515_y2L;
+  cab1_pk1515_x2L = cab1_pk1515_x1L; cab1_pk1515_x1L = tmp; cab1_pk1515_y2L = cab1_pk1515_y1L; cab1_pk1515_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk1515_b0n * tmp + cab1_pk1515_b1n * cab1_pk1515_x1R + cab1_pk1515_b2n * cab1_pk1515_x2R - cab1_pk1515_a1n * cab1_pk1515_y1R - cab1_pk1515_a2n * cab1_pk1515_y2R;
+  cab1_pk1515_x2R = cab1_pk1515_x1R; cab1_pk1515_x1R = tmp; cab1_pk1515_y2R = cab1_pk1515_y1R; cab1_pk1515_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk2446_b0n * tmp + cab1_pk2446_b1n * cab1_pk2446_x1L + cab1_pk2446_b2n * cab1_pk2446_x2L - cab1_pk2446_a1n * cab1_pk2446_y1L - cab1_pk2446_a2n * cab1_pk2446_y2L;
+  cab1_pk2446_x2L = cab1_pk2446_x1L; cab1_pk2446_x1L = tmp; cab1_pk2446_y2L = cab1_pk2446_y1L; cab1_pk2446_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk2446_b0n * tmp + cab1_pk2446_b1n * cab1_pk2446_x1R + cab1_pk2446_b2n * cab1_pk2446_x2R - cab1_pk2446_a1n * cab1_pk2446_y1R - cab1_pk2446_a2n * cab1_pk2446_y2R;
+  cab1_pk2446_x2R = cab1_pk2446_x1R; cab1_pk2446_x1R = tmp; cab1_pk2446_y2R = cab1_pk2446_y1R; cab1_pk2446_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk2592_b0n * tmp + cab1_pk2592_b1n * cab1_pk2592_x1L + cab1_pk2592_b2n * cab1_pk2592_x2L - cab1_pk2592_a1n * cab1_pk2592_y1L - cab1_pk2592_a2n * cab1_pk2592_y2L;
+  cab1_pk2592_x2L = cab1_pk2592_x1L; cab1_pk2592_x1L = tmp; cab1_pk2592_y2L = cab1_pk2592_y1L; cab1_pk2592_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk2592_b0n * tmp + cab1_pk2592_b1n * cab1_pk2592_x1R + cab1_pk2592_b2n * cab1_pk2592_x2R - cab1_pk2592_a1n * cab1_pk2592_y1R - cab1_pk2592_a2n * cab1_pk2592_y2R;
+  cab1_pk2592_x2R = cab1_pk2592_x1R; cab1_pk2592_x1R = tmp; cab1_pk2592_y2R = cab1_pk2592_y1R; cab1_pk2592_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_pk3390_b0n * tmp + cab1_pk3390_b1n * cab1_pk3390_x1L + cab1_pk3390_b2n * cab1_pk3390_x2L - cab1_pk3390_a1n * cab1_pk3390_y1L - cab1_pk3390_a2n * cab1_pk3390_y2L;
+  cab1_pk3390_x2L = cab1_pk3390_x1L; cab1_pk3390_x1L = tmp; cab1_pk3390_y2L = cab1_pk3390_y1L; cab1_pk3390_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_pk3390_b0n * tmp + cab1_pk3390_b1n * cab1_pk3390_x1R + cab1_pk3390_b2n * cab1_pk3390_x2R - cab1_pk3390_a1n * cab1_pk3390_y1R - cab1_pk3390_a2n * cab1_pk3390_y2R;
+  cab1_pk3390_x2R = cab1_pk3390_x1R; cab1_pk3390_x1R = tmp; cab1_pk3390_y2R = cab1_pk3390_y1R; cab1_pk3390_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_lpf_b0n * tmp + cab1_lpf_b1n * cab1_lpf1_x1L + cab1_lpf_b2n * cab1_lpf1_x2L - cab1_lpf_a1n * cab1_lpf1_y1L - cab1_lpf_a2n * cab1_lpf1_y2L;
+  cab1_lpf1_x2L = cab1_lpf1_x1L; cab1_lpf1_x1L = tmp; cab1_lpf1_y2L = cab1_lpf1_y1L; cab1_lpf1_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_lpf_b0n * tmp + cab1_lpf_b1n * cab1_lpf1_x1R + cab1_lpf_b2n * cab1_lpf1_x2R - cab1_lpf_a1n * cab1_lpf1_y1R - cab1_lpf_a2n * cab1_lpf1_y2R;
+  cab1_lpf1_x2R = cab1_lpf1_x1R; cab1_lpf1_x1R = tmp; cab1_lpf1_y2R = cab1_lpf1_y1R; cab1_lpf1_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab1_lpf_b0n * tmp + cab1_lpf_b1n * cab1_lpf2_x1L + cab1_lpf_b2n * cab1_lpf2_x2L - cab1_lpf_a1n * cab1_lpf2_y1L - cab1_lpf_a2n * cab1_lpf2_y2L;
+  cab1_lpf2_x2L = cab1_lpf2_x1L; cab1_lpf2_x1L = tmp; cab1_lpf2_y2L = cab1_lpf2_y1L; cab1_lpf2_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab1_lpf_b0n * tmp + cab1_lpf_b1n * cab1_lpf2_x1R + cab1_lpf_b2n * cab1_lpf2_x2R - cab1_lpf_a1n * cab1_lpf2_y1R - cab1_lpf_a2n * cab1_lpf2_y2R;
+  cab1_lpf2_x2R = cab1_lpf2_x1R; cab1_lpf2_x1R = tmp; cab1_lpf2_y2R = cab1_lpf2_y1R; cab1_lpf2_y1R = spl1;
+
+  spl0 *= 1.3335;
+  spl1 *= 1.3335;
+);
+
+cab_select == 2 ? (
+  tmp = spl0;
+  spl0 = cab2_hpf_b0n * tmp + cab2_hpf_b1n * cab2_hpf1_x1L + cab2_hpf_b2n * cab2_hpf1_x2L - cab2_hpf_a1n * cab2_hpf1_y1L - cab2_hpf_a2n * cab2_hpf1_y2L;
+  cab2_hpf1_x2L = cab2_hpf1_x1L; cab2_hpf1_x1L = tmp; cab2_hpf1_y2L = cab2_hpf1_y1L; cab2_hpf1_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_hpf_b0n * tmp + cab2_hpf_b1n * cab2_hpf1_x1R + cab2_hpf_b2n * cab2_hpf1_x2R - cab2_hpf_a1n * cab2_hpf1_y1R - cab2_hpf_a2n * cab2_hpf1_y2R;
+  cab2_hpf1_x2R = cab2_hpf1_x1R; cab2_hpf1_x1R = tmp; cab2_hpf1_y2R = cab2_hpf1_y1R; cab2_hpf1_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_hpf_b0n * tmp + cab2_hpf_b1n * cab2_hpf2_x1L + cab2_hpf_b2n * cab2_hpf2_x2L - cab2_hpf_a1n * cab2_hpf2_y1L - cab2_hpf_a2n * cab2_hpf2_y2L;
+  cab2_hpf2_x2L = cab2_hpf2_x1L; cab2_hpf2_x1L = tmp; cab2_hpf2_y2L = cab2_hpf2_y1L; cab2_hpf2_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_hpf_b0n * tmp + cab2_hpf_b1n * cab2_hpf2_x1R + cab2_hpf_b2n * cab2_hpf2_x2R - cab2_hpf_a1n * cab2_hpf2_y1R - cab2_hpf_a2n * cab2_hpf2_y2R;
+  cab2_hpf2_x2R = cab2_hpf2_x1R; cab2_hpf2_x1R = tmp; cab2_hpf2_y2R = cab2_hpf2_y1R; cab2_hpf2_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_hpf_b0n * tmp + cab2_hpf_b1n * cab2_hpf3_x1L + cab2_hpf_b2n * cab2_hpf3_x2L - cab2_hpf_a1n * cab2_hpf3_y1L - cab2_hpf_a2n * cab2_hpf3_y2L;
+  cab2_hpf3_x2L = cab2_hpf3_x1L; cab2_hpf3_x1L = tmp; cab2_hpf3_y2L = cab2_hpf3_y1L; cab2_hpf3_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_hpf_b0n * tmp + cab2_hpf_b1n * cab2_hpf3_x1R + cab2_hpf_b2n * cab2_hpf3_x2R - cab2_hpf_a1n * cab2_hpf3_y1R - cab2_hpf_a2n * cab2_hpf3_y2R;
+  cab2_hpf3_x2R = cab2_hpf3_x1R; cab2_hpf3_x1R = tmp; cab2_hpf3_y2R = cab2_hpf3_y1R; cab2_hpf3_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_pk224_b0n * tmp + cab2_pk224_b1n * cab2_pk224_x1L + cab2_pk224_b2n * cab2_pk224_x2L - cab2_pk224_a1n * cab2_pk224_y1L - cab2_pk224_a2n * cab2_pk224_y2L;
+  cab2_pk224_x2L = cab2_pk224_x1L; cab2_pk224_x1L = tmp; cab2_pk224_y2L = cab2_pk224_y1L; cab2_pk224_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_pk224_b0n * tmp + cab2_pk224_b1n * cab2_pk224_x1R + cab2_pk224_b2n * cab2_pk224_x2R - cab2_pk224_a1n * cab2_pk224_y1R - cab2_pk224_a2n * cab2_pk224_y2R;
+  cab2_pk224_x2R = cab2_pk224_x1R; cab2_pk224_x1R = tmp; cab2_pk224_y2R = cab2_pk224_y1R; cab2_pk224_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_ls428_b0n * tmp + cab2_ls428_b1n * cab2_ls428_x1L + cab2_ls428_b2n * cab2_ls428_x2L - cab2_ls428_a1n * cab2_ls428_y1L - cab2_ls428_a2n * cab2_ls428_y2L;
+  cab2_ls428_x2L = cab2_ls428_x1L; cab2_ls428_x1L = tmp; cab2_ls428_y2L = cab2_ls428_y1L; cab2_ls428_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_ls428_b0n * tmp + cab2_ls428_b1n * cab2_ls428_x1R + cab2_ls428_b2n * cab2_ls428_x2R - cab2_ls428_a1n * cab2_ls428_y1R - cab2_ls428_a2n * cab2_ls428_y2R;
+  cab2_ls428_x2R = cab2_ls428_x1R; cab2_ls428_x1R = tmp; cab2_ls428_y2R = cab2_ls428_y1R; cab2_ls428_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_pk635_b0n * tmp + cab2_pk635_b1n * cab2_pk635_x1L + cab2_pk635_b2n * cab2_pk635_x2L - cab2_pk635_a1n * cab2_pk635_y1L - cab2_pk635_a2n * cab2_pk635_y2L;
+  cab2_pk635_x2L = cab2_pk635_x1L; cab2_pk635_x1L = tmp; cab2_pk635_y2L = cab2_pk635_y1L; cab2_pk635_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_pk635_b0n * tmp + cab2_pk635_b1n * cab2_pk635_x1R + cab2_pk635_b2n * cab2_pk635_x2R - cab2_pk635_a1n * cab2_pk635_y1R - cab2_pk635_a2n * cab2_pk635_y2R;
+  cab2_pk635_x2R = cab2_pk635_x1R; cab2_pk635_x1R = tmp; cab2_pk635_y2R = cab2_pk635_y1R; cab2_pk635_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_pk1658_b0n * tmp + cab2_pk1658_b1n * cab2_pk1658_x1L + cab2_pk1658_b2n * cab2_pk1658_x2L - cab2_pk1658_a1n * cab2_pk1658_y1L - cab2_pk1658_a2n * cab2_pk1658_y2L;
+  cab2_pk1658_x2L = cab2_pk1658_x1L; cab2_pk1658_x1L = tmp; cab2_pk1658_y2L = cab2_pk1658_y1L; cab2_pk1658_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_pk1658_b0n * tmp + cab2_pk1658_b1n * cab2_pk1658_x1R + cab2_pk1658_b2n * cab2_pk1658_x2R - cab2_pk1658_a1n * cab2_pk1658_y1R - cab2_pk1658_a2n * cab2_pk1658_y2R;
+  cab2_pk1658_x2R = cab2_pk1658_x1R; cab2_pk1658_x1R = tmp; cab2_pk1658_y2R = cab2_pk1658_y1R; cab2_pk1658_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_pk3840_b0n * tmp + cab2_pk3840_b1n * cab2_pk3840_x1L + cab2_pk3840_b2n * cab2_pk3840_x2L - cab2_pk3840_a1n * cab2_pk3840_y1L - cab2_pk3840_a2n * cab2_pk3840_y2L;
+  cab2_pk3840_x2L = cab2_pk3840_x1L; cab2_pk3840_x1L = tmp; cab2_pk3840_y2L = cab2_pk3840_y1L; cab2_pk3840_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_pk3840_b0n * tmp + cab2_pk3840_b1n * cab2_pk3840_x1R + cab2_pk3840_b2n * cab2_pk3840_x2R - cab2_pk3840_a1n * cab2_pk3840_y1R - cab2_pk3840_a2n * cab2_pk3840_y2R;
+  cab2_pk3840_x2R = cab2_pk3840_x1R; cab2_pk3840_x1R = tmp; cab2_pk3840_y2R = cab2_pk3840_y1R; cab2_pk3840_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_pk8500_b0n * tmp + cab2_pk8500_b1n * cab2_pk8500_x1L + cab2_pk8500_b2n * cab2_pk8500_x2L - cab2_pk8500_a1n * cab2_pk8500_y1L - cab2_pk8500_a2n * cab2_pk8500_y2L;
+  cab2_pk8500_x2L = cab2_pk8500_x1L; cab2_pk8500_x1L = tmp; cab2_pk8500_y2L = cab2_pk8500_y1L; cab2_pk8500_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_pk8500_b0n * tmp + cab2_pk8500_b1n * cab2_pk8500_x1R + cab2_pk8500_b2n * cab2_pk8500_x2R - cab2_pk8500_a1n * cab2_pk8500_y1R - cab2_pk8500_a2n * cab2_pk8500_y2R;
+  cab2_pk8500_x2R = cab2_pk8500_x1R; cab2_pk8500_x1R = tmp; cab2_pk8500_y2R = cab2_pk8500_y1R; cab2_pk8500_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_lpf_b0n * tmp + cab2_lpf_b1n * cab2_lpf1_x1L + cab2_lpf_b2n * cab2_lpf1_x2L - cab2_lpf_a1n * cab2_lpf1_y1L - cab2_lpf_a2n * cab2_lpf1_y2L;
+  cab2_lpf1_x2L = cab2_lpf1_x1L; cab2_lpf1_x1L = tmp; cab2_lpf1_y2L = cab2_lpf1_y1L; cab2_lpf1_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_lpf_b0n * tmp + cab2_lpf_b1n * cab2_lpf1_x1R + cab2_lpf_b2n * cab2_lpf1_x2R - cab2_lpf_a1n * cab2_lpf1_y1R - cab2_lpf_a2n * cab2_lpf1_y2R;
+  cab2_lpf1_x2R = cab2_lpf1_x1R; cab2_lpf1_x1R = tmp; cab2_lpf1_y2R = cab2_lpf1_y1R; cab2_lpf1_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab2_lpf_b0n * tmp + cab2_lpf_b1n * cab2_lpf2_x1L + cab2_lpf_b2n * cab2_lpf2_x2L - cab2_lpf_a1n * cab2_lpf2_y1L - cab2_lpf_a2n * cab2_lpf2_y2L;
+  cab2_lpf2_x2L = cab2_lpf2_x1L; cab2_lpf2_x1L = tmp; cab2_lpf2_y2L = cab2_lpf2_y1L; cab2_lpf2_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab2_lpf_b0n * tmp + cab2_lpf_b1n * cab2_lpf2_x1R + cab2_lpf_b2n * cab2_lpf2_x2R - cab2_lpf_a1n * cab2_lpf2_y1R - cab2_lpf_a2n * cab2_lpf2_y2R;
+  cab2_lpf2_x2R = cab2_lpf2_x1R; cab2_lpf2_x1R = tmp; cab2_lpf2_y2R = cab2_lpf2_y1R; cab2_lpf2_y1R = spl1;
+
+  spl0 *= 0.6683;
+  spl1 *= 0.6683;
+);
+
+cab_select == 3 ? (
+  tmp = spl0;
+  spl0 = cab3_hpf_b0n * tmp + cab3_hpf_b1n * cab3_hpf1_x1L + cab3_hpf_b2n * cab3_hpf1_x2L - cab3_hpf_a1n * cab3_hpf1_y1L - cab3_hpf_a2n * cab3_hpf1_y2L;
+  cab3_hpf1_x2L = cab3_hpf1_x1L; cab3_hpf1_x1L = tmp; cab3_hpf1_y2L = cab3_hpf1_y1L; cab3_hpf1_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_hpf_b0n * tmp + cab3_hpf_b1n * cab3_hpf1_x1R + cab3_hpf_b2n * cab3_hpf1_x2R - cab3_hpf_a1n * cab3_hpf1_y1R - cab3_hpf_a2n * cab3_hpf1_y2R;
+  cab3_hpf1_x2R = cab3_hpf1_x1R; cab3_hpf1_x1R = tmp; cab3_hpf1_y2R = cab3_hpf1_y1R; cab3_hpf1_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_hpf_b0n * tmp + cab3_hpf_b1n * cab3_hpf2_x1L + cab3_hpf_b2n * cab3_hpf2_x2L - cab3_hpf_a1n * cab3_hpf2_y1L - cab3_hpf_a2n * cab3_hpf2_y2L;
+  cab3_hpf2_x2L = cab3_hpf2_x1L; cab3_hpf2_x1L = tmp; cab3_hpf2_y2L = cab3_hpf2_y1L; cab3_hpf2_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_hpf_b0n * tmp + cab3_hpf_b1n * cab3_hpf2_x1R + cab3_hpf_b2n * cab3_hpf2_x2R - cab3_hpf_a1n * cab3_hpf2_y1R - cab3_hpf_a2n * cab3_hpf2_y2R;
+  cab3_hpf2_x2R = cab3_hpf2_x1R; cab3_hpf2_x1R = tmp; cab3_hpf2_y2R = cab3_hpf2_y1R; cab3_hpf2_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk173_b0n * tmp + cab3_pk173_b1n * cab3_pk173_x1L + cab3_pk173_b2n * cab3_pk173_x2L - cab3_pk173_a1n * cab3_pk173_y1L - cab3_pk173_a2n * cab3_pk173_y2L;
+  cab3_pk173_x2L = cab3_pk173_x1L; cab3_pk173_x1L = tmp; cab3_pk173_y2L = cab3_pk173_y1L; cab3_pk173_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk173_b0n * tmp + cab3_pk173_b1n * cab3_pk173_x1R + cab3_pk173_b2n * cab3_pk173_x2R - cab3_pk173_a1n * cab3_pk173_y1R - cab3_pk173_a2n * cab3_pk173_y2R;
+  cab3_pk173_x2R = cab3_pk173_x1R; cab3_pk173_x1R = tmp; cab3_pk173_y2R = cab3_pk173_y1R; cab3_pk173_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk245_b0n * tmp + cab3_pk245_b1n * cab3_pk245_x1L + cab3_pk245_b2n * cab3_pk245_x2L - cab3_pk245_a1n * cab3_pk245_y1L - cab3_pk245_a2n * cab3_pk245_y2L;
+  cab3_pk245_x2L = cab3_pk245_x1L; cab3_pk245_x1L = tmp; cab3_pk245_y2L = cab3_pk245_y1L; cab3_pk245_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk245_b0n * tmp + cab3_pk245_b1n * cab3_pk245_x1R + cab3_pk245_b2n * cab3_pk245_x2R - cab3_pk245_a1n * cab3_pk245_y1R - cab3_pk245_a2n * cab3_pk245_y2R;
+  cab3_pk245_x2R = cab3_pk245_x1R; cab3_pk245_x1R = tmp; cab3_pk245_y2R = cab3_pk245_y1R; cab3_pk245_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk354_b0n * tmp + cab3_pk354_b1n * cab3_pk354_x1L + cab3_pk354_b2n * cab3_pk354_x2L - cab3_pk354_a1n * cab3_pk354_y1L - cab3_pk354_a2n * cab3_pk354_y2L;
+  cab3_pk354_x2L = cab3_pk354_x1L; cab3_pk354_x1L = tmp; cab3_pk354_y2L = cab3_pk354_y1L; cab3_pk354_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk354_b0n * tmp + cab3_pk354_b1n * cab3_pk354_x1R + cab3_pk354_b2n * cab3_pk354_x2R - cab3_pk354_a1n * cab3_pk354_y1R - cab3_pk354_a2n * cab3_pk354_y2R;
+  cab3_pk354_x2R = cab3_pk354_x1R; cab3_pk354_x1R = tmp; cab3_pk354_y2R = cab3_pk354_y1R; cab3_pk354_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk581_b0n * tmp + cab3_pk581_b1n * cab3_pk581_x1L + cab3_pk581_b2n * cab3_pk581_x2L - cab3_pk581_a1n * cab3_pk581_y1L - cab3_pk581_a2n * cab3_pk581_y2L;
+  cab3_pk581_x2L = cab3_pk581_x1L; cab3_pk581_x1L = tmp; cab3_pk581_y2L = cab3_pk581_y1L; cab3_pk581_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk581_b0n * tmp + cab3_pk581_b1n * cab3_pk581_x1R + cab3_pk581_b2n * cab3_pk581_x2R - cab3_pk581_a1n * cab3_pk581_y1R - cab3_pk581_a2n * cab3_pk581_y2R;
+  cab3_pk581_x2R = cab3_pk581_x1R; cab3_pk581_x1R = tmp; cab3_pk581_y2R = cab3_pk581_y1R; cab3_pk581_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk1246_b0n * tmp + cab3_pk1246_b1n * cab3_pk1246_x1L + cab3_pk1246_b2n * cab3_pk1246_x2L - cab3_pk1246_a1n * cab3_pk1246_y1L - cab3_pk1246_a2n * cab3_pk1246_y2L;
+  cab3_pk1246_x2L = cab3_pk1246_x1L; cab3_pk1246_x1L = tmp; cab3_pk1246_y2L = cab3_pk1246_y1L; cab3_pk1246_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk1246_b0n * tmp + cab3_pk1246_b1n * cab3_pk1246_x1R + cab3_pk1246_b2n * cab3_pk1246_x2R - cab3_pk1246_a1n * cab3_pk1246_y1R - cab3_pk1246_a2n * cab3_pk1246_y2R;
+  cab3_pk1246_x2R = cab3_pk1246_x1R; cab3_pk1246_x1R = tmp; cab3_pk1246_y2R = cab3_pk1246_y1R; cab3_pk1246_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk1841_b0n * tmp + cab3_pk1841_b1n * cab3_pk1841_x1L + cab3_pk1841_b2n * cab3_pk1841_x2L - cab3_pk1841_a1n * cab3_pk1841_y1L - cab3_pk1841_a2n * cab3_pk1841_y2L;
+  cab3_pk1841_x2L = cab3_pk1841_x1L; cab3_pk1841_x1L = tmp; cab3_pk1841_y2L = cab3_pk1841_y1L; cab3_pk1841_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk1841_b0n * tmp + cab3_pk1841_b1n * cab3_pk1841_x1R + cab3_pk1841_b2n * cab3_pk1841_x2R - cab3_pk1841_a1n * cab3_pk1841_y1R - cab3_pk1841_a2n * cab3_pk1841_y2R;
+  cab3_pk1841_x2R = cab3_pk1841_x1R; cab3_pk1841_x1R = tmp; cab3_pk1841_y2R = cab3_pk1841_y1R; cab3_pk1841_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk1864_b0n * tmp + cab3_pk1864_b1n * cab3_pk1864_x1L + cab3_pk1864_b2n * cab3_pk1864_x2L - cab3_pk1864_a1n * cab3_pk1864_y1L - cab3_pk1864_a2n * cab3_pk1864_y2L;
+  cab3_pk1864_x2L = cab3_pk1864_x1L; cab3_pk1864_x1L = tmp; cab3_pk1864_y2L = cab3_pk1864_y1L; cab3_pk1864_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk1864_b0n * tmp + cab3_pk1864_b1n * cab3_pk1864_x1R + cab3_pk1864_b2n * cab3_pk1864_x2R - cab3_pk1864_a1n * cab3_pk1864_y1R - cab3_pk1864_a2n * cab3_pk1864_y2R;
+  cab3_pk1864_x2R = cab3_pk1864_x1R; cab3_pk1864_x1R = tmp; cab3_pk1864_y2R = cab3_pk1864_y1R; cab3_pk1864_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk2167_b0n * tmp + cab3_pk2167_b1n * cab3_pk2167_x1L + cab3_pk2167_b2n * cab3_pk2167_x2L - cab3_pk2167_a1n * cab3_pk2167_y1L - cab3_pk2167_a2n * cab3_pk2167_y2L;
+  cab3_pk2167_x2L = cab3_pk2167_x1L; cab3_pk2167_x1L = tmp; cab3_pk2167_y2L = cab3_pk2167_y1L; cab3_pk2167_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk2167_b0n * tmp + cab3_pk2167_b1n * cab3_pk2167_x1R + cab3_pk2167_b2n * cab3_pk2167_x2R - cab3_pk2167_a1n * cab3_pk2167_y1R - cab3_pk2167_a2n * cab3_pk2167_y2R;
+  cab3_pk2167_x2R = cab3_pk2167_x1R; cab3_pk2167_x1R = tmp; cab3_pk2167_y2R = cab3_pk2167_y1R; cab3_pk2167_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk2800_b0n * tmp + cab3_pk2800_b1n * cab3_pk2800_x1L + cab3_pk2800_b2n * cab3_pk2800_x2L - cab3_pk2800_a1n * cab3_pk2800_y1L - cab3_pk2800_a2n * cab3_pk2800_y2L;
+  cab3_pk2800_x2L = cab3_pk2800_x1L; cab3_pk2800_x1L = tmp; cab3_pk2800_y2L = cab3_pk2800_y1L; cab3_pk2800_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk2800_b0n * tmp + cab3_pk2800_b1n * cab3_pk2800_x1R + cab3_pk2800_b2n * cab3_pk2800_x2R - cab3_pk2800_a1n * cab3_pk2800_y1R - cab3_pk2800_a2n * cab3_pk2800_y2R;
+  cab3_pk2800_x2R = cab3_pk2800_x1R; cab3_pk2800_x1R = tmp; cab3_pk2800_y2R = cab3_pk2800_y1R; cab3_pk2800_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk3200_b0n * tmp + cab3_pk3200_b1n * cab3_pk3200_x1L + cab3_pk3200_b2n * cab3_pk3200_x2L - cab3_pk3200_a1n * cab3_pk3200_y1L - cab3_pk3200_a2n * cab3_pk3200_y2L;
+  cab3_pk3200_x2L = cab3_pk3200_x1L; cab3_pk3200_x1L = tmp; cab3_pk3200_y2L = cab3_pk3200_y1L; cab3_pk3200_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk3200_b0n * tmp + cab3_pk3200_b1n * cab3_pk3200_x1R + cab3_pk3200_b2n * cab3_pk3200_x2R - cab3_pk3200_a1n * cab3_pk3200_y1R - cab3_pk3200_a2n * cab3_pk3200_y2R;
+  cab3_pk3200_x2R = cab3_pk3200_x1R; cab3_pk3200_x1R = tmp; cab3_pk3200_y2R = cab3_pk3200_y1R; cab3_pk3200_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk6500_b0n * tmp + cab3_pk6500_b1n * cab3_pk6500_x1L + cab3_pk6500_b2n * cab3_pk6500_x2L - cab3_pk6500_a1n * cab3_pk6500_y1L - cab3_pk6500_a2n * cab3_pk6500_y2L;
+  cab3_pk6500_x2L = cab3_pk6500_x1L; cab3_pk6500_x1L = tmp; cab3_pk6500_y2L = cab3_pk6500_y1L; cab3_pk6500_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk6500_b0n * tmp + cab3_pk6500_b1n * cab3_pk6500_x1R + cab3_pk6500_b2n * cab3_pk6500_x2R - cab3_pk6500_a1n * cab3_pk6500_y1R - cab3_pk6500_a2n * cab3_pk6500_y2R;
+  cab3_pk6500_x2R = cab3_pk6500_x1R; cab3_pk6500_x1R = tmp; cab3_pk6500_y2R = cab3_pk6500_y1R; cab3_pk6500_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk7858_b0n * tmp + cab3_pk7858_b1n * cab3_pk7858_x1L + cab3_pk7858_b2n * cab3_pk7858_x2L - cab3_pk7858_a1n * cab3_pk7858_y1L - cab3_pk7858_a2n * cab3_pk7858_y2L;
+  cab3_pk7858_x2L = cab3_pk7858_x1L; cab3_pk7858_x1L = tmp; cab3_pk7858_y2L = cab3_pk7858_y1L; cab3_pk7858_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk7858_b0n * tmp + cab3_pk7858_b1n * cab3_pk7858_x1R + cab3_pk7858_b2n * cab3_pk7858_x2R - cab3_pk7858_a1n * cab3_pk7858_y1R - cab3_pk7858_a2n * cab3_pk7858_y2R;
+  cab3_pk7858_x2R = cab3_pk7858_x1R; cab3_pk7858_x1R = tmp; cab3_pk7858_y2R = cab3_pk7858_y1R; cab3_pk7858_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_lpf_b0n * tmp + cab3_lpf_b1n * cab3_lpf1_x1L + cab3_lpf_b2n * cab3_lpf1_x2L - cab3_lpf_a1n * cab3_lpf1_y1L - cab3_lpf_a2n * cab3_lpf1_y2L;
+  cab3_lpf1_x2L = cab3_lpf1_x1L; cab3_lpf1_x1L = tmp; cab3_lpf1_y2L = cab3_lpf1_y1L; cab3_lpf1_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_lpf_b0n * tmp + cab3_lpf_b1n * cab3_lpf1_x1R + cab3_lpf_b2n * cab3_lpf1_x2R - cab3_lpf_a1n * cab3_lpf1_y1R - cab3_lpf_a2n * cab3_lpf1_y2R;
+  cab3_lpf1_x2R = cab3_lpf1_x1R; cab3_lpf1_x1R = tmp; cab3_lpf1_y2R = cab3_lpf1_y1R; cab3_lpf1_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_lpf_b0n * tmp + cab3_lpf_b1n * cab3_lpf2_x1L + cab3_lpf_b2n * cab3_lpf2_x2L - cab3_lpf_a1n * cab3_lpf2_y1L - cab3_lpf_a2n * cab3_lpf2_y2L;
+  cab3_lpf2_x2L = cab3_lpf2_x1L; cab3_lpf2_x1L = tmp; cab3_lpf2_y2L = cab3_lpf2_y1L; cab3_lpf2_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_lpf_b0n * tmp + cab3_lpf_b1n * cab3_lpf2_x1R + cab3_lpf_b2n * cab3_lpf2_x2R - cab3_lpf_a1n * cab3_lpf2_y1R - cab3_lpf_a2n * cab3_lpf2_y2R;
+  cab3_lpf2_x2R = cab3_lpf2_x1R; cab3_lpf2_x1R = tmp; cab3_lpf2_y2R = cab3_lpf2_y1R; cab3_lpf2_y1R = spl1;
+
+  tmp = spl0;
+  spl0 = cab3_pk11000_b0n * tmp + cab3_pk11000_b1n * cab3_pk11000_x1L + cab3_pk11000_b2n * cab3_pk11000_x2L - cab3_pk11000_a1n * cab3_pk11000_y1L - cab3_pk11000_a2n * cab3_pk11000_y2L;
+  cab3_pk11000_x2L = cab3_pk11000_x1L; cab3_pk11000_x1L = tmp; cab3_pk11000_y2L = cab3_pk11000_y1L; cab3_pk11000_y1L = spl0;
+  tmp = spl1;
+  spl1 = cab3_pk11000_b0n * tmp + cab3_pk11000_b1n * cab3_pk11000_x1R + cab3_pk11000_b2n * cab3_pk11000_x2R - cab3_pk11000_a1n * cab3_pk11000_y1R - cab3_pk11000_a2n * cab3_pk11000_y2R;
+  cab3_pk11000_x2R = cab3_pk11000_x1R; cab3_pk11000_x1R = tmp; cab3_pk11000_y2R = cab3_pk11000_y1R; cab3_pk11000_y1R = spl1;
+
+  spl0 *= 0.7943;
+  spl1 *= 0.7943;
+);
+
+// Harmonic Exciter - HPF + soft saturation in parallel
+  hex_amount > 0 ? (
+    tmp = spl0;
+    hex_hpL = hex_b0n * tmp + hex_b1n * hex_x1L + hex_b2n * hex_x2L - hex_a1n * hex_y1L - hex_a2n * hex_y2L;
+    hex_x2L = hex_x1L; hex_x1L = tmp; hex_y2L = hex_y1L; hex_y1L = hex_hpL;
+    tmp = spl1;
+    hex_hpR = hex_b0n * tmp + hex_b1n * hex_x1R + hex_b2n * hex_x2R - hex_a1n * hex_y1R - hex_a2n * hex_y2R;
+    hex_x2R = hex_x1R; hex_x1R = tmp; hex_y2R = hex_y1R; hex_y1R = hex_hpR;
+    hex_hpL = (hex_hpL * 2.0) / (1 + abs(hex_hpL * 2.0)) * 0.5;
+    hex_hpR = (hex_hpR * 2.0) / (1 + abs(hex_hpR * 2.0)) * 0.5;
+    spl0 += hex_hpL * hex_amount;
+    spl1 += hex_hpR * hex_amount;
+  );
+
+  // Transient Enhancer - attack boost via fast/slow envelope
+  te_amount > 0.01 ? (
+    te_abs = max(abs(spl0), abs(spl1));
+    te_fast = te_abs * te_attack + te_fast * (1 - te_attack);
+    te_slow = te_abs * te_release + te_slow * (1 - te_release);
+    te_diff = max(0, te_fast - te_slow);
+    te_gain = 1 + te_diff * te_amount * 3;
+    spl0 *= te_gain;
+    spl1 *= te_gain;
+  );
+
+// Output Protection
+amp_mode == 0 ? (
+  // Classic: soft limiter + DC blocker
+  spl0 = (spl0) / (1 + abs(spl0)) * 0.99;
+  spl1 = (spl1) / (1 + abs(spl1)) * 0.99;
+);
+dc_tmpL = spl0;
+dc_tmpR = spl1;
+spl0 = dc_tmpL - dc_x1L + dc_y1L * 0.999;
+spl1 = dc_tmpR - dc_x1R + dc_y1R * 0.999;
+dc_x1L = dc_tmpL;
+dc_x1R = dc_tmpR;
+dc_y1L = spl0;
+dc_y1R = spl1;
+
+amp_mode == 0 ? (
+  spl0 *= master_vol * 3.0 * drive_comp;
+  spl1 *= master_vol * 3.0 * drive_comp;
+) : (
+  spl0 *= master_vol * 0.355;
+  spl1 *= master_vol * 0.355;
+);
