@@ -10,7 +10,10 @@ Download the latest version for free at [sarantasoundworks.com](https://sarantas
 |--------|------|-------------|
 | **Lozengrad Amfi** | Guitar Amp Sim | Gate, input gain, drive, 3-band EQ, 3 cabinet IR models, Mid Spice, bus compressor, master volume |
 | **Lozengrad Amfi V2** | Guitar Amp Sim | Dual-mode preamp: **Classic** (cascaded tube gain stages, cold clipper, tone stack, presence, sag, resonance) and **Hard** (4-stage cascaded hard-clipper + auto gain). Gate, input gain, drive, 3-band tone stack (bass/mid/treble), sag, presence, resonance depth, 3 cabinet IR models, bright cap (low/high), transient enhancer, harmonic exciter, master volume |
-| **Lozengrad Bas Amfi** | Bass Amp Sim | Split-band design with LR4 crossover, low channel (bass focus + saturation), high channel (pre-HPF + pre-emp + 3-stage hard clipping + auto-gain), tilt EQ, cabinet simulation, dry/wet blend, character control |
+| **Lozengrad Drumbus One** | Adaptive Drum Bus | Multiband compression and adaptive dynamics tailored for drum bus processing. Single-knob intensity controls the entire chain — from compression and EQ to transient shaping — automatically adapting to the mix |
+| **Lozengrad Guitarbus One** | Adaptive Guitar Bus | Multiband compression, saturation, EQ, and dynamic control designed for guitar bus processing. Single-knob intensity blends compression, harmonic enhancement, and frequency shaping that adapts to playing dynamics |
+| **Lozengrad Bas Amfi v1.2** | Bass Amp Sim (Current) | Split-band bass amplifier simulator with separate low and high frequency processing. Low channel focuses bass fundamentals with saturation, high channel adds pre-emphasis and multi-stage clipping. Includes tilt EQ, cabinet simulation, character control, and dry/wet blend |
+| **Lozengrad Bas Amfi Legacy** | Bass Amp Sim (Legacy) | Original bass amplifier simulator — preserved for sessions that require the v1.0 sound and workflow |
 | **Lozengrad Balans EQ** | Parametric EQ | 8-band EQ with HPF, LPF, Low Shelf, High Shelf, Bell per band. Built-in FFT spectrum analyzer with EQ curve overlay |
 | **Lozengrad EQuinox** | Tone EQ | Simple bass/treble control with Low and High frequency adjustments, FFT display |
 | **Lozengrad Feeltre** | Multi-Mode Filter | LPF, HPF, BPF, APF, Tilt EQ, Low Shelf, High Shelf, Tilt Shelf with gain control and spectrum analyzer |

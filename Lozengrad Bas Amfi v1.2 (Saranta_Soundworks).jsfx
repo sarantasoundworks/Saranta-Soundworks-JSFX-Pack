@@ -1,0 +1,994 @@
+desc:Lozengrad Bas Amfi v1.5 (Saranta Soundworks)
+// Split-band bass amplifier — Multi-stage preamp + power amp + speaker coloration engine
+// Crossover → Low (Mono+BF+Comp+DynSat) / High (PreHPF+PreEmp+PreEQ+Comp+MultiStage+PostEQ+LPF+Tilt)
+//          → Blend → PowerAmp (Comp+Trafo+Limit) → Speaker Coloration Engine → Output
+// Version: 1.5
+// Changelog v1.5:
+//   1. Speaker Coloration Engine: complete cabinet sim overhaul
+//      - Multi-resonance: 3 bands (low/mid/upper) per cab type
+//      - Mid scoop notch replaces old dual scoop+mid peaks
+//      - 4 high-mid peaks/notches for cone breakup + high detail
+//      - High shelf presence (replaces old peak filter)
+//      - Air shelf at 9kHz for natural high-end rolloff
+//      - High-end saturation with speaker damping (tanh + dynamic attenuation)
+//      - 2 all-pass filters for minimum-phase emulation
+//      - Distinctive EQ signatures: Classic 8x10, Modern 8x10, Dark 1x15
+//   2. Increased preamp drive range: character table boosted + Drive slider widened
+// Changelog v1.4:
+//   1. Multi-stage preamp replaces single-stage distortion (6 gentle stages)
+//   2. Character macro controls 14+ DSP parameters with non-linear weighting
+//   3. Enhanced cabinet sim with resonant peak + cone breakup simulation
+//   4. Dynamic low saturation — transient peaks stay clean, sustain gets harmonics
+//   5. Frequency-dependent distortion via mid-band sidechain modulation
+//   6. RMS-based auto gain compensation (smooth, no pumping)
+//   7. Enhanced compressors with soft knee, RMS detection, program-dependent release
+//   8. Auto oversampling (4x ≤48kHz, 2x ≤96kHz, off ≥192kHz)
+//   9. Power amplifier stage before cab (comp+transformer+limiter)
+//  10. Multi-stage clipping algorithm (preamp→soft→bias→soft→tanh→asym→output)
+//  11. Refactored DSP with reusable compressor/RMS objects
+
+// ============================================================================
+// SLIDER DEFINITIONS
+// ============================================================================
+slider1:0<-24,24,0.1>Input Gain (dB)
+slider2:-120<-120,0,0.1>Gate Threshold (dB)
+slider3:350<80,2000,5>X-Over Freq (Hz)
+slider4:20<0,100,0.1>Low Saturation (%)
+slider5:0<0,100,0.1>Bass Focus (%)
+slider6:50<0,100,0.1>Attack Pre-EQ (%)
+slider7:50<0,100,0.1>Drive (%)
+slider8:0<-100,100,1>Tilt EQ
+slider9:50<0,100,0.1>Blend (%)
+slider10:0<0,3,1{Cab Off,Classic 8x10,Modern 8x10,Dark 1x15}>Cab Sim
+slider11:0<-24,24,0.1>Output Gain (dB)
+slider12:50<0,100,1>Character
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+// ============================================================================
+// @init
+// ============================================================================
+@init
+  ext_noinit = 1;
+  denorm = pow(10, -30);
+
+  // --- MATH HELPERS ---
+  function db2amp(db) ( pow(10, db * 0.05) );
+  function amp2db(amp) local(a) ( a = max(amp, 0.000001); 20 * log10(a) );
+  function tanh(x) local(ex, enx) ( x = max(-10, min(10, x)); ex = exp(x); enx = exp(-x); (ex - enx) / (ex + enx) );
+  function hardclip(x, lim) ( max(-lim, min(lim, x)) );
+  function cube(x) ( x * x * x );
+
+  // --- CHARACTER MACRO: Flat parameter table ---
+  // 14 parameters × 5 breakpoints (Vintage/SansAmp/GK/Darkglass/Modern)
+  ct[0]=2.5;  ct[1]=4.0;  ct[2]=6.0;  ct[3]=10.0;  ct[4]=14.0;  // drive
+  ct[5]=-22;  ct[6]=-20;  ct[7]=-16;  ct[8]=-12;   ct[9]=-8;    // thresh
+  ct[10]=3;   ct[11]=4;   ct[12]=6;   ct[13]=8;    ct[14]=10;   // ratio
+  ct[15]=0.15; ct[16]=0.25; ct[17]=0.35; ct[18]=0.55; ct[19]=0.75;  // sat
+  ct[20]=0;   ct[21]=0.3; ct[22]=0.5; ct[23]=0.4;  ct[24]=0.7;   // trafo
+  ct[25]=80;  ct[26]=70;  ct[27]=60;  ct[28]=55;   ct[29]=48;    // reso_freq
+  ct[30]=2.0; ct[31]=1.5; ct[32]=1.0; ct[33]=0.8;  ct[34]=0.6;   // reso_q
+  ct[35]=30;  ct[36]=35;  ct[37]=45;  ct[38]=55;   ct[39]=70;    // damp
+  ct[40]=2;   ct[41]=3.5; ct[42]=5;   ct[43]=7;    ct[44]=9;     // presence
+  ct[45]=0.05; ct[46]=0.1; ct[47]=0.08; ct[48]=0.35; ct[49]=0.15;  // asym
+  ct[50]=4000; ct[51]=5000; ct[52]=6000; ct[53]=7000; ct[54]=8000;  // lpf
+  ct[55]=6;   ct[56]=10;  ct[57]=14;  ct[58]=18;   ct[59]=22;    // pre_emp
+  ct[60]=0;   ct[61]=0.15; ct[62]=0.3; ct[63]=0.6; ct[64]=0.8;   // clip
+  ct[65]=0.2; ct[66]=0.35; ct[67]=0.5; ct[68]=0.7; ct[69]=0.9;   // dyn
+
+  // Parameter offsets into flat ct[] table
+  co_drv=0; co_thr=5; co_rat=10; co_sat=15; co_trf=20;
+  co_rfq=25; co_rqq=30; co_dmp=35; co_prs=40; co_asy=45;
+  co_lpf=50; co_pem=55; co_clp=60; co_dyn=65;
+
+  // Character interpolation function (given char_t 0-1, return interpolated value)
+  // Breakpoints: char_t 0→Vintage, 0.1→SansAmp, 0.2→GK, 0.6→Darkglass, 1.0→Modern
+  function char_val(t, off)
+  local(idx, frac)
+  (
+    t <= 0.1 ? ( idx=0; frac=t/0.1; ) :
+    t <= 0.2 ? ( idx=1; frac=(t-0.1)/0.1; ) :
+    t <= 0.6 ? ( idx=2; frac=(t-0.2)/0.4; ) :
+    ( idx=3; frac=(t-0.6)/0.4; );
+    ct[off+idx] + (ct[off+idx+1] - ct[off+idx]) * frac;
+  );
+
+  // --- MULTI-STAGE DISTORTION ---
+  // 6 gentle cascaded stages: preamp → soft clip → bias → soft clip → tanh → asymmetry
+  function distort_multistage(x)
+  local(s1, s2, s3, s4, s5, asym, blend)
+  (
+    x *= char_preamp_drive;
+
+    // Stage 1: Preamp — gentle asymmetric tube
+    s1 = x > 0 ? tanh(x) : tanh(x * 1.3) * 0.85;
+    s1 = s1 * 0.75 + x * 0.25;
+
+    // Stage 2: Soft clip (mild polynomial)
+    s2 = s1 > 1 ? 1 : (s1 < -1 ? -1 : s1 - cube(s1) * 0.1667);
+
+    // Stage 3: Bias (asymmetric DC offset)
+    s3 = s2 + char_asymmetry * 0.08;
+
+    // Stage 4: Soft clip (moderate)
+    s4 = s3 * 1.4;
+    s4 = s4 > 1 ? 1 : (s4 < -1 ? -1 : s4 - cube(s4) * 0.25);
+
+    // Stage 5: Tanh (final glue)
+    s5 = tanh(s4 * 1.15);
+
+    // Stage 6: Asymmetry (overall balance) + clip blend
+    asym = s5 > 0 ? s5 * (1 + char_asymmetry * 0.25) : s5 * (1 - char_asymmetry * 0.15);
+    blend = asym * (1 - char_clip_blend) + hardclip(asym, 1) * char_clip_blend;
+
+    blend * 0.35;
+  );
+
+  // --- MID-SIDEBAND FILTER for frequency-dependent distortion ---
+  // Bandpass at ~1.2kHz measures mid energy → modulates drive depth
+  function bp_init(fc, q, sr)
+  instance(b0, b1, b2, a1, a2)
+  local(w0, cosw, alpha, a0)
+  (
+    w0 = 2 * $pi * max(fc,1) / sr;
+    cosw = cos(w0);
+    alpha = sin(w0) / (2 * q);
+    a0 = 1 + alpha;
+    b0 = alpha;
+    b1 = 0;
+    b2 = -alpha;
+    a1 = -2 * cosw;
+    a2 = 1 - alpha;
+    b0 /= a0; b1 /= a0; b2 /= a0;
+    a1 /= a0; a2 /= a0;
+  );
+
+  // ========================================================================
+  // BIQUAD FILTERS (RBJ cookbook, instance-based)
+  // ========================================================================
+
+  function lp_init(fc, sr)
+  instance(b0, b1, b2, a1, a2)
+  local(w0, cosw, alpha, a0)
+  (
+    w0 = 2 * $pi * max(fc,1) / sr;
+    cosw = cos(w0);
+    alpha = sin(w0) * 0.7071067811865476;
+    a0 = 1 + alpha;
+    b0 = (1 - cosw) * 0.5;
+    b1 = 1 - cosw;
+    b2 = (1 - cosw) * 0.5;
+    a1 = -2 * cosw;
+    a2 = 1 - alpha;
+    b0 /= a0; b1 /= a0; b2 /= a0;
+    a1 /= a0; a2 /= a0;
+  );
+
+  function hp_init(fc, sr)
+  instance(b0, b1, b2, a1, a2)
+  local(w0, cosw, alpha, a0)
+  (
+    w0 = 2 * $pi * max(fc,1) / sr;
+    cosw = cos(w0);
+    alpha = sin(w0) * 0.7071067811865476;
+    a0 = 1 + alpha;
+    b0 = (1 + cosw) * 0.5;
+    b1 = -(1 + cosw);
+    b2 = (1 + cosw) * 0.5;
+    a1 = -2 * cosw;
+    a2 = 1 - alpha;
+    b0 /= a0; b1 /= a0; b2 /= a0;
+    a1 /= a0; a2 /= a0;
+  );
+
+  function peak_init(fc, db, q, sr)
+  instance(b0, b1, b2, a1, a2)
+  local(A, w0, cosw, alpha, a0)
+  (
+    A = pow(10, db * 0.025);
+    w0 = 2 * $pi * max(fc,1) / sr;
+    cosw = cos(w0);
+    alpha = sin(w0) / (2 * q);
+    a0 = 1 + alpha / A;
+    b0 = 1 + alpha * A;
+    b1 = -2 * cosw;
+    b2 = 1 - alpha * A;
+    a1 = -2 * cosw;
+    a2 = 1 - alpha / A;
+    b0 /= a0; b1 /= a0; b2 /= a0;
+    a1 /= a0; a2 /= a0;
+  );
+
+  function hshelf_init(fc, db, sr)
+  instance(b0, b1, b2, a1, a2)
+  local(A, w0, cosw, alpha, a0, beta, S)
+  (
+    S = 1.0;
+    A = pow(10, db * 0.025);
+    w0 = 2 * $pi * max(fc,1) / sr;
+    cosw = cos(w0);
+    alpha = sin(w0) * 0.5 * sqrt((A + 1/A) * (1/S - 1) + 2);
+    beta = 2 * sqrt(A) * alpha;
+    a0 = (A+1) - (A-1)*cosw + beta;
+    b0 = A * ((A+1) + (A-1)*cosw + beta);
+    b1 = -2 * A * ((A-1) + (A+1)*cosw);
+    b2 = A * ((A+1) + (A-1)*cosw - beta);
+    a1 = 2 * ((A-1) - (A+1)*cosw);
+    a2 = (A+1) - (A-1)*cosw - beta;
+    b0 /= a0; b1 /= a0; b2 /= a0;
+    a1 /= a0; a2 /= a0;
+  );
+
+  function ap_init(fc, sr)
+  instance(b0, b1, b2, a1, a2)
+  local(w0, cosw, alpha, a0)
+  (
+    w0 = 2 * $pi * max(fc,1) / sr;
+    cosw = cos(w0);
+    alpha = sin(w0) * 0.5;
+    a0 = 1 + alpha;
+    b0 = 1 - alpha;
+    b1 = -2 * cosw;
+    b2 = 1 + alpha;
+    a1 = -2 * cosw;
+    a2 = 1 - alpha;
+    b0 /= a0; b1 /= a0; b2 /= a0;
+    a1 /= a0; a2 /= a0;
+  );
+
+  function bq_tick(xn)
+  instance(x1, x2, y1, y2, b0, b1, b2, a1, a2)
+  local(yn)
+  (
+    yn = b0*xn + b1*x1 + b2*x2 - a1*y1 - a2*y2;
+    x2 = x1; x1 = xn;
+    y2 = y1; y1 = yn;
+    yn;
+  );
+
+  // ========================================================================
+  // DC BLOCKER (1st-order IIR highpass at ~20Hz)
+  // ========================================================================
+  function dc_init(sr)
+  instance(R)
+  ( R = 1.0 - (126.0 / sr); );
+
+  function dc_tick(xn)
+  instance(x1, y1, R)
+  local(yn)
+  (
+    yn = xn - x1 + R * y1;
+    x1 = xn;
+    y1 = yn;
+    yn;
+  );
+
+  // ========================================================================
+  // RMS DETECTOR (one-pole moving average, instance-based)
+  // ========================================================================
+  function rms_init(window_ms, sr)
+  instance(avg, coeff)
+  (
+    coeff = exp(-1.0 / (max(window_ms, 1) * 0.001 * sr));
+    avg = 0;
+  );
+
+  function rms_tick(x)
+  instance(avg, coeff)
+  (
+    avg = coeff * avg + (1 - coeff) * x * x;
+    sqrt(max(avg, 0.000001));
+  );
+
+  // ========================================================================
+  // COMPRESSOR (instance-based, RMS detection, soft knee, program-dependent release)
+  // ========================================================================
+  function comp_init(thresh_lin, ratio_lin, knee_db, attack_ms, release_ms, sr)
+  instance(thr, rat, knee_half, att, rel, rms_avg, sm_gain, env)
+  (
+    thr = thresh_lin;
+    rat = ratio_lin;
+    knee_half = knee_db * 0.5;
+    att = exp(-1.0 / (max(attack_ms, 0.1) * 0.001 * sr));
+    rel = exp(-1.0 / (max(release_ms, 1.0) * 0.001 * sr));
+    rms_avg = 0;
+    sm_gain = 1;
+    env = 0;
+  );
+
+  function comp_tick(x)
+  instance(thr, rat, knee_half, att, rel, rms_avg, sm_gain, env)
+  local(rms, db, thr_db, gr, gain)
+  (
+    rms_avg = rel * rms_avg + (1 - rel) * x * x;
+    env = sqrt(max(rms_avg, 0.000001));
+    db = 20 * log10(max(env, 0.000001));
+    thr_db = 20 * log10(max(thr, 0.000001));
+    db > thr_db + knee_half ? (
+      gr = thr_db + (db - thr_db) / rat;
+    ) : db > thr_db - knee_half ? (
+      gr = db * (1 - (db - (thr_db - knee_half)) / (2 * knee_half)) + (thr_db + (db - thr_db) / rat) * ((db - (thr_db - knee_half)) / (2 * knee_half));
+    ) : (
+      gr = db;
+    );
+    gain = pow(10, (gr - db) * 0.05);
+    gain < sm_gain ? (
+      sm_gain = att * sm_gain + (1 - att) * gain;
+    ) : (
+      sm_gain = rel * sm_gain + (1 - rel) * gain;
+    );
+    x * sm_gain;
+  );
+
+  // Compressor w/ program-dependent release
+  function comp_pd_tick(x)
+  instance(thr, rat, knee_half, att, rel, rms_avg, sm_gain, env, pd_rel)
+  local(rms, db, thr_db, gr, gain, abs_x)
+  (
+    rms_avg = rel * rms_avg + (1 - rel) * x * x;
+    env = sqrt(max(rms_avg, 0.000001));
+    abs_x = abs(x);
+    // Program-dependent release: faster for transients (peak >> RMS), slower for sustain
+    pd_rel = abs_x > env * 2 ? att : rel;
+    rms_avg = pd_rel * rms_avg + (1 - pd_rel) * x * x;
+    env = sqrt(max(rms_avg, 0.000001));
+    db = 20 * log10(max(env, 0.000001));
+    thr_db = 20 * log10(max(thr, 0.000001));
+    db > thr_db + knee_half ? (
+      gr = thr_db + (db - thr_db) / rat;
+    ) : db > thr_db - knee_half ? (
+      gr = db * (1 - (db - (thr_db - knee_half)) / (2 * knee_half)) + (thr_db + (db - thr_db) / rat) * ((db - (thr_db - knee_half)) / (2 * knee_half));
+    ) : (
+      gr = db;
+    );
+    gain = pow(10, (gr - db) * 0.05);
+    gain < sm_gain ? (
+      sm_gain = att * sm_gain + (1 - att) * gain;
+    ) : (
+      sm_gain = pd_rel * sm_gain + (1 - pd_rel) * gain;
+    );
+    x * sm_gain;
+  );
+
+  // --- TRANSFORMER SATURATION (lightweight Iron/Nickel blend) ---
+  function iron_sat(x) ( x - 0.08 * cube(x) + 0.015 * x * x * x * x * x; );
+  function nickel_sat(x) ( x + 0.04 * x * abs(x) - 0.06 * cube(x); );
+
+  // ========================================================================
+  // INSTANCE DECLARATIONS
+  // ========================================================================
+
+  // --- CROSSOVER: LR4 = two cascaded Butterworth per band ---
+  xo_lp1_L.lp_init(350, srate);   xo_lp2_L.lp_init(350, srate);
+  xo_lp1_R.lp_init(350, srate);   xo_lp2_R.lp_init(350, srate);
+
+  // --- LOW CHANNEL ---
+  bf_L.peak_init(80, 0, 0.7, srate);    bf_R.peak_init(80, 0, 0.7, srate);
+  comp_low_L.comp_init(0.1, 4, 3, 3, 80, srate);
+  comp_low_R.comp_init(0.1, 4, 3, 3, 80, srate);
+  low_rms_L.rms_init(50, srate);
+
+  // --- HIGH CHANNEL ---
+  pre_hpf_L.hp_init(400, srate);           pre_hpf_R.hp_init(400, srate);
+  char_pre_emp_db = 8 + slider12 * 0.14;
+  pre_emp_L.hshelf_init(1500, char_pre_emp_db, srate);  pre_emp_R.hshelf_init(1500, char_pre_emp_db, srate);
+  pre_scoop_L.peak_init(100, -6, 0.8, srate);   pre_scoop_R.peak_init(100, -6, 0.8, srate);
+  pre_scoop2_L.peak_init(350, -8, 1.0, srate);  pre_scoop2_R.peak_init(350, -8, 1.0, srate);
+  pre_800_L.hshelf_init(800, 0, srate);          pre_800_R.hshelf_init(800, 0, srate);
+  pre_boost_L.peak_init(3500, 0, 1.5, srate);   pre_boost_R.peak_init(3500, 0, 1.5, srate);
+
+  // Mid sideband for frequency-dependent drive
+  bp_L.bp_init(1200, 1.5, srate);   bp_R.bp_init(1200, 1.5, srate);
+
+  // High-band compressor (pre-distortion)
+  comp_high_L.comp_init(0.25, 8, 3, 0.5, 50, srate);
+  comp_high_R.comp_init(0.25, 8, 3, 0.5, 50, srate);
+
+  // Post-distortion cleanup
+  post_mud200_L.peak_init(200, -4, 1.0, srate); post_mud200_R.peak_init(200, -4, 1.0, srate);
+  post_mud500_L.peak_init(500, -3, 1.2, srate); post_mud500_R.peak_init(500, -3, 1.2, srate);
+  post_2k_L.peak_init(2000, -3, 1.0, srate);    post_2k_R.peak_init(2000, -3, 1.0, srate);
+  post_hiss_L.peak_init(3000, -2, 1.4, srate);  post_hiss_R.peak_init(3000, -2, 1.4, srate);
+  char_lpf_freq = 2500 + slider12 * 40;
+  post_lpf_L.lp_init(char_lpf_freq, srate);      post_lpf_R.lp_init(char_lpf_freq, srate);
+
+  // Tilt EQ
+  tone_lo_L.peak_init(60, 0, 0.5, srate);   tone_lo_R.peak_init(60, 0, 0.5, srate);
+  tone_hi_L.peak_init(3000, 0, 0.5, srate); tone_hi_R.peak_init(3000, 0, 0.5, srate);
+
+  // --- CAB SIM (Speaker Coloration Engine) ---
+  cab_hpf1_L.hp_init(50, srate);  cab_hpf1_R.hp_init(50, srate);
+  cab_hpf2_L.hp_init(50, srate);  cab_hpf2_R.hp_init(50, srate);
+  cab_hpf3_L.hp_init(50, srate);  cab_hpf3_R.hp_init(50, srate);
+  cab_lpf1_L.lp_init(5500, srate); cab_lpf1_R.lp_init(5500, srate);
+  cab_lpf2_L.lp_init(5300, srate); cab_lpf2_R.lp_init(5300, srate);
+  cab_reso1_L.peak_init(70, 3, 2.0, srate);  cab_reso1_R.peak_init(70, 3, 2.0, srate);
+  cab_reso2_L.peak_init(180, -1.5, 2.0, srate); cab_reso2_R.peak_init(180, -1.5, 2.0, srate);
+  cab_reso3_L.peak_init(850, 1, 3.0, srate); cab_reso3_R.peak_init(850, 1, 3.0, srate);
+  cab_notch_L.peak_init(400, -8, 1.5, srate); cab_notch_R.peak_init(400, -8, 1.5, srate);
+  cab_peak1_L.peak_init(2500, 2, 1.2, srate); cab_peak1_R.peak_init(2500, 2, 1.2, srate);
+  cab_peak2_L.peak_init(3400, -1.5, 4, srate); cab_peak2_R.peak_init(3400, -1.5, 4, srate);
+  cab_peak3_L.peak_init(4300, 1, 2, srate); cab_peak3_R.peak_init(4300, 1, 2, srate);
+  cab_peak4_L.peak_init(5600, -5, 5, srate); cab_peak4_R.peak_init(5600, -5, 5, srate);
+  cab_hshelf_L.hshelf_init(1800, 0, srate); cab_hshelf_R.hshelf_init(1800, 0, srate);
+  cab_air_L.hshelf_init(9000, -10, srate); cab_air_R.hshelf_init(9000, -10, srate);
+  cab_shpf_L.hp_init(2500, srate); cab_shpf_R.hp_init(2500, srate);
+  cab_ap1_L.ap_init(900, srate); cab_ap1_R.ap_init(900, srate);
+  cab_ap2_L.ap_init(4200, srate); cab_ap2_R.ap_init(4200, srate);
+
+  // Cabinet resonance filter (character-dependent)
+  cab_reso_L.peak_init(80, 3, 2.0, srate);  cab_reso_R.peak_init(80, 3, 2.0, srate);
+
+  // --- POWER AMP ---
+  pa_comp_L.comp_init(0.5, 2, 6, 10, 100, srate);
+  pa_comp_R.comp_init(0.5, 2, 6, 10, 100, srate);
+  pa_hpf_L.hp_init(30, srate);   pa_hpf_R.hp_init(30, srate);
+
+  // --- DC BLOCKERS ---
+  dc_L.dc_init(srate);   dc_R.dc_init(srate);
+
+  // --- OVERSAMPLING ANTI-ALIAS FILTERS ---
+  // 2x mode: single biquad LPF
+  os_cutoff = 0.45 * (srate * 0.5);
+  os_alias_lp_L.lp_init(os_cutoff, srate * 2);   os_alias_lp_R.lp_init(os_cutoff, srate * 2);
+  // 4x mode: cascaded biquads (4th order)
+  os_aa4_1_L.lp_init(os_cutoff, srate * 4);  os_aa4_1_R.lp_init(os_cutoff, srate * 4);
+  os_aa4_2_L.lp_init(os_cutoff, srate * 4);  os_aa4_2_R.lp_init(os_cutoff, srate * 4);
+
+  // --- SMOOTHING STATE ---
+  smooth_coeff = exp(-1.0 / (0.01 * srate));
+  gate_ramp_coeff = exp(-1.0 / (0.0005 * srate));
+  sm_in_gain   = 0;    sm_gate_thr  = -120;
+  sm_low_sat   = 0;    sm_attack    = 0;
+  sm_drive     = 0;    sm_blend     = 0;
+  sm_out_gain  = 0;
+
+  // Auto-gain (RMS-based)
+  auto_rms_in.rms_init(200, srate);
+  auto_rms_out.rms_init(200, srate);
+  auto_gain    = 1;    auto_target  = 1;
+
+  // Gate envelope followers
+  gate_env_L   = 0;    gate_env_R   = 0;    gate_state   = 1;
+
+  // Oversampling state
+  os_prev_L = 0;    os_prev_R = 0;
+  last_os_mode = -1;
+
+  // Last-known srate
+  last_srate   = srate;
+
+// ============================================================================
+// @slider
+// ============================================================================
+@slider
+  // --- Character macro (non-linear mapping) ---
+  char_norm = slider12 * 0.01;
+  char_norm <= 0.5 ? (
+    char_t = char_norm * 0.4;
+  ) : (
+    char_t = 0.2 + (char_norm - 0.5) * 1.6;
+  );
+  char_t = max(0, min(1, char_t));
+
+  char_preamp_drive = char_val(char_t, co_drv);
+  char_comp_thresh_db = char_val(char_t, co_thr);
+  char_comp_ratio = char_val(char_t, co_rat);
+  char_sat_depth = char_val(char_t, co_sat);
+  char_trafo_blend = char_val(char_t, co_trf);
+  char_cab_reso_freq = char_val(char_t, co_rfq);
+  char_cab_reso_q = char_val(char_t, co_rqq);
+  char_low_damp_hz = char_val(char_t, co_dmp);
+  char_presence_db = char_val(char_t, co_prs);
+  char_asymmetry = char_val(char_t, co_asy);
+  char_lpf_hz = char_val(char_t, co_lpf);
+  char_pre_emp_db = char_val(char_t, co_pem);
+  char_clip_blend = char_val(char_t, co_clp);
+  char_dyn_resp = char_val(char_t, co_dyn);
+
+  // --- CROSSOVER ---
+  xo_lp1_L.lp_init(slider3, srate);   xo_lp2_L.lp_init(slider3, srate);
+  xo_lp1_R.lp_init(slider3, srate);   xo_lp2_R.lp_init(slider3, srate);
+
+  // --- LOW CHANNEL: Bass Focus ---
+  bf_gain_db = slider5 * 0.15;
+  bf_L.peak_init(80, bf_gain_db, 0.5, srate);
+  bf_R.peak_init(80, bf_gain_db, 0.5, srate);
+
+  // Low compressor (character-dependent)
+  comp_low_L.comp_init(db2amp(char_comp_thresh_db), char_comp_ratio, 3, 3 * (1 + char_dyn_resp), 80 / (1 + char_dyn_resp), srate);
+  comp_low_R.comp_init(db2amp(char_comp_thresh_db), char_comp_ratio, 3, 3 * (1 + char_dyn_resp), 80 / (1 + char_dyn_resp), srate);
+
+  // --- HIGH CHANNEL: Pre-Dist EQ ---
+  pre_scoop_L.peak_init(100, -6, 0.8, srate);
+  pre_scoop_R.peak_init(100, -6, 0.8, srate);
+  pre_scoop2_L.peak_init(350, -8, 1.0, srate);
+  pre_scoop2_R.peak_init(350, -8, 1.0, srate);
+  pre_800_L.hshelf_init(800, 8 * slider6/100, srate);
+  pre_800_R.hshelf_init(800, 8 * slider6/100, srate);
+  pre_boost_L.peak_init(3500, 5 * slider6/100, 1.5, srate);
+  pre_boost_R.peak_init(3500, 5 * slider6/100, 1.5, srate);
+
+  // High compressor (character-dependent)
+  comp_high_L.comp_init(db2amp(char_comp_thresh_db + 4), char_comp_ratio, 3, 0.5 * (1 + char_dyn_resp), 50 / (1 + char_dyn_resp * 0.5), srate);
+  comp_high_R.comp_init(db2amp(char_comp_thresh_db + 4), char_comp_ratio, 3, 0.5 * (1 + char_dyn_resp), 50 / (1 + char_dyn_resp * 0.5), srate);
+
+  // Post-dist EQ
+  post_mud200_L.peak_init(200, -4, 1.0, srate); post_mud200_R.peak_init(200, -4, 1.0, srate);
+  post_mud500_L.peak_init(500, -3, 1.2, srate); post_mud500_R.peak_init(500, -3, 1.2, srate);
+  post_2k_L.peak_init(2000, -3, 1.0, srate);    post_2k_R.peak_init(2000, -3, 1.0, srate);
+
+  // Character-dependent LPF + pre-emp
+  post_lpf_L.lp_init(char_lpf_hz, srate);   post_lpf_R.lp_init(char_lpf_hz, srate);
+  pre_emp_L.hshelf_init(1500, char_pre_emp_db, srate);  pre_emp_R.hshelf_init(1500, char_pre_emp_db, srate);
+  pre_hpf_L.hp_init(400, srate);  pre_hpf_R.hp_init(400, srate);
+
+  // --- CABINET SIM ---
+  slider10 == 1 ? (
+    cab_hpf1_L.hp_init(50, srate);  cab_hpf1_R.hp_init(50, srate);
+    cab_hpf2_L.hp_init(50, srate);  cab_hpf2_R.hp_init(50, srate);
+    cab_hpf3_L.hp_init(50, srate);  cab_hpf3_R.hp_init(50, srate);
+    cab_lpf1_L.lp_init(5500, srate); cab_lpf1_R.lp_init(5500, srate);
+    cab_lpf2_L.lp_init(5300, srate); cab_lpf2_R.lp_init(5300, srate);
+    cab_reso1_L.peak_init(70, 3, 2.0, srate);  cab_reso1_R.peak_init(70, 3, 2.0, srate);
+    cab_reso2_L.peak_init(180, -1.5, 2.0, srate); cab_reso2_R.peak_init(180, -1.5, 2.0, srate);
+    cab_reso3_L.peak_init(850, 1, 3.0, srate); cab_reso3_R.peak_init(850, 1, 3.0, srate);
+    cab_notch_L.peak_init(400, -8, 1.5, srate); cab_notch_R.peak_init(400, -8, 1.5, srate);
+    cab_peak1_L.peak_init(2500, 2, 1.2, srate); cab_peak1_R.peak_init(2500, 2, 1.2, srate);
+    cab_peak2_L.peak_init(3400, -1.5, 4, srate); cab_peak2_R.peak_init(3400, -1.5, 4, srate);
+    cab_peak3_L.peak_init(4300, 1, 2, srate); cab_peak3_R.peak_init(4300, 1, 2, srate);
+    cab_peak4_L.peak_init(5600, -5, 5, srate); cab_peak4_R.peak_init(5600, -5, 5, srate);
+    cab_hshelf_L.hshelf_init(1800, 0 + char_presence_db * 0.15, srate); cab_hshelf_R.hshelf_init(1800, 0 + char_presence_db * 0.15, srate);
+    cab_air_L.hshelf_init(9000, -10, srate); cab_air_R.hshelf_init(9000, -10, srate);
+    cab_shpf_L.hp_init(2500, srate); cab_shpf_R.hp_init(2500, srate);
+    cab_ap1_L.ap_init(900, srate); cab_ap1_R.ap_init(900, srate);
+    cab_ap2_L.ap_init(4200, srate); cab_ap2_R.ap_init(4200, srate);
+  );
+  slider10 == 2 ? (
+    cab_hpf1_L.hp_init(40, srate);  cab_hpf1_R.hp_init(40, srate);
+    cab_hpf2_L.hp_init(40, srate);  cab_hpf2_R.hp_init(40, srate);
+    cab_hpf3_L.hp_init(40, srate);  cab_hpf3_R.hp_init(40, srate);
+    cab_lpf1_L.lp_init(6800, srate); cab_lpf1_R.lp_init(6800, srate);
+    cab_lpf2_L.lp_init(6500, srate); cab_lpf2_R.lp_init(6500, srate);
+    cab_reso1_L.peak_init(60, 2, 2.0, srate);  cab_reso1_R.peak_init(60, 2, 2.0, srate);
+    cab_reso2_L.peak_init(150, 1, 2.0, srate); cab_reso2_R.peak_init(150, 1, 2.0, srate);
+    cab_reso3_L.peak_init(900, -2, 3.0, srate); cab_reso3_R.peak_init(900, -2, 3.0, srate);
+    cab_notch_L.peak_init(350, -5, 1.5, srate); cab_notch_R.peak_init(350, -5, 1.5, srate);
+    cab_peak1_L.peak_init(1800, 2.5, 1.5, srate); cab_peak1_R.peak_init(1800, 2.5, 1.5, srate);
+    cab_peak2_L.peak_init(2800, 0, 2, srate); cab_peak2_R.peak_init(2800, 0, 2, srate);
+    cab_peak3_L.peak_init(4500, -1.5, 4, srate); cab_peak3_R.peak_init(4500, -1.5, 4, srate);
+    cab_peak4_L.peak_init(6000, -6, 5, srate); cab_peak4_R.peak_init(6000, -6, 5, srate);
+    cab_hshelf_L.hshelf_init(2000, 1 + char_presence_db * 0.15, srate); cab_hshelf_R.hshelf_init(2000, 1 + char_presence_db * 0.15, srate);
+    cab_air_L.hshelf_init(9500, -10, srate); cab_air_R.hshelf_init(9500, -10, srate);
+    cab_shpf_L.hp_init(2800, srate); cab_shpf_R.hp_init(2800, srate);
+    cab_ap1_L.ap_init(1000, srate); cab_ap1_R.ap_init(1000, srate);
+    cab_ap2_L.ap_init(4500, srate); cab_ap2_R.ap_init(4500, srate);
+  );
+  slider10 == 3 ? (
+    cab_hpf1_L.hp_init(35, srate);  cab_hpf1_R.hp_init(35, srate);
+    cab_hpf2_L.hp_init(35, srate);  cab_hpf2_R.hp_init(35, srate);
+    cab_hpf3_L.hp_init(35, srate);  cab_hpf3_R.hp_init(35, srate);
+    cab_lpf1_L.lp_init(4500, srate); cab_lpf1_R.lp_init(4500, srate);
+    cab_lpf2_L.lp_init(4200, srate); cab_lpf2_R.lp_init(4200, srate);
+    cab_reso1_L.peak_init(55, 4, 2.0, srate);  cab_reso1_R.peak_init(55, 4, 2.0, srate);
+    cab_reso2_L.peak_init(180, 2, 1.5, srate); cab_reso2_R.peak_init(180, 2, 1.5, srate);
+    cab_reso3_L.peak_init(700, -2, 2.0, srate); cab_reso3_R.peak_init(700, -2, 2.0, srate);
+    cab_notch_L.peak_init(450, -4, 1.5, srate); cab_notch_R.peak_init(450, -4, 1.5, srate);
+    cab_peak1_L.peak_init(1200, -2, 2, srate); cab_peak1_R.peak_init(1200, -2, 2, srate);
+    cab_peak2_L.peak_init(2500, -3, 2, srate); cab_peak2_R.peak_init(2500, -3, 2, srate);
+    cab_peak3_L.peak_init(3500, 1, 3, srate); cab_peak3_R.peak_init(3500, 1, 3, srate);
+    cab_peak4_L.peak_init(5000, -2, 5, srate); cab_peak4_R.peak_init(5000, -2, 5, srate);
+    cab_hshelf_L.hshelf_init(1500, 1.5 + char_presence_db * 0.1, srate); cab_hshelf_R.hshelf_init(1500, 1.5 + char_presence_db * 0.1, srate);
+    cab_air_L.hshelf_init(8000, -4, srate); cab_air_R.hshelf_init(8000, -4, srate);
+    cab_shpf_L.hp_init(2200, srate); cab_shpf_R.hp_init(2200, srate);
+    cab_ap1_L.ap_init(800, srate); cab_ap1_R.ap_init(800, srate);
+    cab_ap2_L.ap_init(3800, srate); cab_ap2_R.ap_init(3800, srate);
+  );
+
+  // Cabinet resonance filter
+  slider10 > 0 ? (
+    cab_reso_L.peak_init(char_cab_reso_freq, 3, char_cab_reso_q, srate);
+    cab_reso_R.peak_init(char_cab_reso_freq, 3, char_cab_reso_q, srate);
+  );
+
+  // --- TILT EQ ---
+  tilt_gain = slider8 * 0.06;
+  tone_lo_L.peak_init(60, -tilt_gain, 0.5, srate);  tone_lo_R.peak_init(60, -tilt_gain, 0.5, srate);
+  tone_hi_L.peak_init(3000, tilt_gain, 0.5, srate); tone_hi_R.peak_init(3000, tilt_gain, 0.5, srate);
+
+  // --- POWER AMP ---
+  pa_comp_L.comp_init(0.5, 2, 6, 10, 100, srate);
+  pa_comp_R.comp_init(0.5, 2, 6, 10, 100, srate);
+  pa_hpf_L.hp_init(char_low_damp_hz, srate);   pa_hpf_R.hp_init(char_low_damp_hz, srate);
+
+// ============================================================================
+// @block
+// ============================================================================
+@block
+  // Drive-adaptive de-hiss
+  hiss_amt = slider7 * 0.01;
+  hiss_cut_db = -2 - hiss_amt * 10;
+  post_hiss_L.peak_init(3000, hiss_cut_db, 1.4, srate);
+  post_hiss_R.peak_init(3000, hiss_cut_db, 1.4, srate);
+
+  // Auto oversampling mode based on sample rate
+  // ≤48kHz → 4x, ≤96kHz → 2x, >96kHz → off
+  os_mode = 0;
+  srate <= 96000 ? os_mode = 1;
+  srate <= 48000 ? os_mode = 2;
+
+  srate != last_srate ? (
+    last_srate = srate;
+    smooth_coeff = exp(-1.0 / (0.01 * srate));
+    gate_ramp_coeff = exp(-1.0 / (0.0005 * srate));
+    dc_L.dc_init(srate);   dc_R.dc_init(srate);
+
+    // Re-init filters
+    xo_lp1_L.lp_init(slider3, srate);   xo_lp2_L.lp_init(slider3, srate);
+    xo_lp1_R.lp_init(slider3, srate);   xo_lp2_R.lp_init(slider3, srate);
+    bf_gain_db = slider5 * 0.15;
+    bf_L.peak_init(80, bf_gain_db, 0.5, srate);   bf_R.peak_init(80, bf_gain_db, 0.5, srate);
+    pre_scoop_L.peak_init(100, -6, 0.8, srate);    pre_scoop_R.peak_init(100, -6, 0.8, srate);
+    pre_scoop2_L.peak_init(350, -8, 1.0, srate);   pre_scoop2_R.peak_init(350, -8, 1.0, srate);
+    pre_800_L.hshelf_init(800, 8 * slider6/100, srate);  pre_800_R.hshelf_init(800, 8 * slider6/100, srate);
+    pre_boost_L.peak_init(3500, 5 * slider6/100, 1.5, srate);  pre_boost_R.peak_init(3500, 5 * slider6/100, 1.5, srate);
+    pre_hpf_L.hp_init(400, srate);   pre_hpf_R.hp_init(400, srate);
+    pre_emp_L.hshelf_init(1500, char_pre_emp_db, srate);  pre_emp_R.hshelf_init(1500, char_pre_emp_db, srate);
+    post_lpf_L.lp_init(char_lpf_hz, srate);   post_lpf_R.lp_init(char_lpf_hz, srate);
+    post_mud200_L.peak_init(200, -4, 1.0, srate);   post_mud200_R.peak_init(200, -4, 1.0, srate);
+    post_mud500_L.peak_init(500, -3, 1.2, srate);   post_mud500_R.peak_init(500, -3, 1.2, srate);
+    post_2k_L.peak_init(2000, -3, 1.0, srate);   post_2k_R.peak_init(2000, -3, 1.0, srate);
+    bp_L.bp_init(1200, 1.5, srate);   bp_R.bp_init(1200, 1.5, srate);
+
+    // Cab sim
+    slider10 == 1 ? (
+      cab_hpf1_L.hp_init(50, srate);  cab_hpf1_R.hp_init(50, srate);
+      cab_hpf2_L.hp_init(50, srate);  cab_hpf2_R.hp_init(50, srate);
+      cab_hpf3_L.hp_init(50, srate);  cab_hpf3_R.hp_init(50, srate);
+      cab_lpf1_L.lp_init(5500, srate); cab_lpf1_R.lp_init(5500, srate);
+      cab_lpf2_L.lp_init(5300, srate); cab_lpf2_R.lp_init(5300, srate);
+      cab_reso1_L.peak_init(70, 3, 2.0, srate);  cab_reso1_R.peak_init(70, 3, 2.0, srate);
+      cab_reso2_L.peak_init(180, -1.5, 2.0, srate); cab_reso2_R.peak_init(180, -1.5, 2.0, srate);
+      cab_reso3_L.peak_init(850, 1, 3.0, srate); cab_reso3_R.peak_init(850, 1, 3.0, srate);
+      cab_notch_L.peak_init(400, -8, 1.5, srate); cab_notch_R.peak_init(400, -8, 1.5, srate);
+      cab_peak1_L.peak_init(2500, 2, 1.2, srate); cab_peak1_R.peak_init(2500, 2, 1.2, srate);
+      cab_peak2_L.peak_init(3400, -1.5, 4, srate); cab_peak2_R.peak_init(3400, -1.5, 4, srate);
+      cab_peak3_L.peak_init(4300, 1, 2, srate); cab_peak3_R.peak_init(4300, 1, 2, srate);
+      cab_peak4_L.peak_init(5600, -5, 5, srate); cab_peak4_R.peak_init(5600, -5, 5, srate);
+      cab_hshelf_L.hshelf_init(1800, 0 + char_presence_db * 0.15, srate); cab_hshelf_R.hshelf_init(1800, 0 + char_presence_db * 0.15, srate);
+      cab_air_L.hshelf_init(9000, -10, srate); cab_air_R.hshelf_init(9000, -10, srate);
+      cab_shpf_L.hp_init(2500, srate); cab_shpf_R.hp_init(2500, srate);
+      cab_ap1_L.ap_init(900, srate); cab_ap1_R.ap_init(900, srate);
+      cab_ap2_L.ap_init(4200, srate); cab_ap2_R.ap_init(4200, srate);
+    );
+    slider10 == 2 ? (
+      cab_hpf1_L.hp_init(40, srate);  cab_hpf1_R.hp_init(40, srate);
+      cab_hpf2_L.hp_init(40, srate);  cab_hpf2_R.hp_init(40, srate);
+      cab_hpf3_L.hp_init(40, srate);  cab_hpf3_R.hp_init(40, srate);
+      cab_lpf1_L.lp_init(6800, srate); cab_lpf1_R.lp_init(6800, srate);
+      cab_lpf2_L.lp_init(6500, srate); cab_lpf2_R.lp_init(6500, srate);
+      cab_reso1_L.peak_init(60, 2, 2.0, srate);  cab_reso1_R.peak_init(60, 2, 2.0, srate);
+      cab_reso2_L.peak_init(150, 1, 2.0, srate); cab_reso2_R.peak_init(150, 1, 2.0, srate);
+      cab_reso3_L.peak_init(900, -2, 3.0, srate); cab_reso3_R.peak_init(900, -2, 3.0, srate);
+      cab_notch_L.peak_init(350, -5, 1.5, srate); cab_notch_R.peak_init(350, -5, 1.5, srate);
+      cab_peak1_L.peak_init(1800, 2.5, 1.5, srate); cab_peak1_R.peak_init(1800, 2.5, 1.5, srate);
+      cab_peak2_L.peak_init(2800, 0, 2, srate); cab_peak2_R.peak_init(2800, 0, 2, srate);
+      cab_peak3_L.peak_init(4500, -1.5, 4, srate); cab_peak3_R.peak_init(4500, -1.5, 4, srate);
+      cab_peak4_L.peak_init(6000, -6, 5, srate); cab_peak4_R.peak_init(6000, -6, 5, srate);
+      cab_hshelf_L.hshelf_init(2000, 1 + char_presence_db * 0.15, srate); cab_hshelf_R.hshelf_init(2000, 1 + char_presence_db * 0.15, srate);
+      cab_air_L.hshelf_init(9500, -10, srate); cab_air_R.hshelf_init(9500, -10, srate);
+      cab_shpf_L.hp_init(2800, srate); cab_shpf_R.hp_init(2800, srate);
+      cab_ap1_L.ap_init(1000, srate); cab_ap1_R.ap_init(1000, srate);
+      cab_ap2_L.ap_init(4500, srate); cab_ap2_R.ap_init(4500, srate);
+    );
+    slider10 == 3 ? (
+      cab_hpf1_L.hp_init(35, srate);  cab_hpf1_R.hp_init(35, srate);
+      cab_hpf2_L.hp_init(35, srate);  cab_hpf2_R.hp_init(35, srate);
+      cab_hpf3_L.hp_init(35, srate);  cab_hpf3_R.hp_init(35, srate);
+      cab_lpf1_L.lp_init(4500, srate); cab_lpf1_R.lp_init(4500, srate);
+      cab_lpf2_L.lp_init(4200, srate); cab_lpf2_R.lp_init(4200, srate);
+      cab_reso1_L.peak_init(55, 4, 2.0, srate);  cab_reso1_R.peak_init(55, 4, 2.0, srate);
+      cab_reso2_L.peak_init(180, 2, 1.5, srate); cab_reso2_R.peak_init(180, 2, 1.5, srate);
+      cab_reso3_L.peak_init(700, -2, 2.0, srate); cab_reso3_R.peak_init(700, -2, 2.0, srate);
+      cab_notch_L.peak_init(450, -4, 1.5, srate); cab_notch_R.peak_init(450, -4, 1.5, srate);
+      cab_peak1_L.peak_init(1200, -2, 2, srate); cab_peak1_R.peak_init(1200, -2, 2, srate);
+      cab_peak2_L.peak_init(2500, -3, 2, srate); cab_peak2_R.peak_init(2500, -3, 2, srate);
+      cab_peak3_L.peak_init(3500, 1, 3, srate); cab_peak3_R.peak_init(3500, 1, 3, srate);
+      cab_peak4_L.peak_init(5000, -2, 5, srate); cab_peak4_R.peak_init(5000, -2, 5, srate);
+      cab_hshelf_L.hshelf_init(1500, 1.5 + char_presence_db * 0.1, srate); cab_hshelf_R.hshelf_init(1500, 1.5 + char_presence_db * 0.1, srate);
+      cab_air_L.hshelf_init(8000, -4, srate); cab_air_R.hshelf_init(8000, -4, srate);
+      cab_shpf_L.hp_init(2200, srate); cab_shpf_R.hp_init(2200, srate);
+      cab_ap1_L.ap_init(800, srate); cab_ap1_R.ap_init(800, srate);
+      cab_ap2_L.ap_init(3800, srate); cab_ap2_R.ap_init(3800, srate);
+    );
+
+    // Power amp
+    pa_comp_L.comp_init(0.5, 2, 6, 10, 100, srate);
+    pa_comp_R.comp_init(0.5, 2, 6, 10, 100, srate);
+    pa_hpf_L.hp_init(char_low_damp_hz, srate);   pa_hpf_R.hp_init(char_low_damp_hz, srate);
+
+    // Tilt EQ
+    tilt_gain = slider8 * 0.06;
+    tone_lo_L.peak_init(60, -tilt_gain, 0.5, srate);  tone_lo_R.peak_init(60, -tilt_gain, 0.5, srate);
+    tone_hi_L.peak_init(3000, tilt_gain, 0.5, srate); tone_hi_R.peak_init(3000, tilt_gain, 0.5, srate);
+
+    // RMS detectors
+    low_rms_L.rms_init(50, srate);
+    auto_rms_in.rms_init(200, srate);
+    auto_rms_out.rms_init(200, srate);
+
+    // Compressors
+    comp_low_L.comp_init(db2amp(char_comp_thresh_db), char_comp_ratio, 3, 3 * (1 + char_dyn_resp), 80 / (1 + char_dyn_resp), srate);
+    comp_low_R.comp_init(db2amp(char_comp_thresh_db), char_comp_ratio, 3, 3 * (1 + char_dyn_resp), 80 / (1 + char_dyn_resp), srate);
+    comp_high_L.comp_init(db2amp(char_comp_thresh_db + 4), char_comp_ratio, 3, 0.5 * (1 + char_dyn_resp), 50 / (1 + char_dyn_resp * 0.5), srate);
+    comp_high_R.comp_init(db2amp(char_comp_thresh_db + 4), char_comp_ratio, 3, 0.5 * (1 + char_dyn_resp), 50 / (1 + char_dyn_resp * 0.5), srate);
+
+    // Cabinet resonance
+    slider10 > 0 ? (
+      cab_reso_L.peak_init(char_cab_reso_freq, 3, char_cab_reso_q, srate);
+      cab_reso_R.peak_init(char_cab_reso_freq, 3, char_cab_reso_q, srate);
+    );
+  );
+
+  // Re-init oversampling filters if mode changed
+  os_mode != last_os_mode ? (
+    last_os_mode = os_mode;
+    os_alias_lp_L.lp_init(0.45 * (srate * 0.5), srate * 2);  os_alias_lp_R.lp_init(0.45 * (srate * 0.5), srate * 2);
+    os_aa4_1_L.lp_init(0.45 * (srate * 0.5), srate * 4);  os_aa4_1_R.lp_init(0.45 * (srate * 0.5), srate * 4);
+    os_aa4_2_L.lp_init(0.45 * (srate * 0.5), srate * 4);  os_aa4_2_R.lp_init(0.45 * (srate * 0.5), srate * 4);
+    // Reset oversampling state to prevent pops
+    os_prev_L = 0;  os_prev_R = 0;
+  );
+
+// ============================================================================
+// @sample
+// ============================================================================
+@sample
+  spl0 += denorm;
+  spl1 += denorm;
+
+  // ======================================================================
+  // 1. INPUT GAIN
+  // ======================================================================
+  sm_in_gain = sm_in_gain * smooth_coeff + slider1 * (1 - smooth_coeff);
+  spl0 *= db2amp(sm_in_gain) * 4;
+  spl1 *= db2amp(sm_in_gain) * 4;
+
+  // ======================================================================
+  // 2. NOISE GATE
+  // ======================================================================
+  slider2 > -120 ? (
+    sm_gate_thr = sm_gate_thr * smooth_coeff + slider2 * (1 - smooth_coeff);
+    thr_lin = db2amp(sm_gate_thr);
+    abs_L = abs(spl0); abs_R = abs(spl1);
+    gate_env_L = max(abs_L, gate_env_L * 0.999 + abs_L * 0.001);
+    gate_env_R = max(abs_R, gate_env_R * 0.999 + abs_R * 0.001);
+    gate_env = max(gate_env_L, gate_env_R);
+    gate_target = gate_env > thr_lin ? 1 : (
+      gate_state > 0.01 && gate_env > thr_lin * 0.5 ? 1 : 0
+    );
+    gate_state += (gate_target - gate_state) * gate_ramp_coeff;
+    spl0 *= gate_state;   spl1 *= gate_state;
+  );
+
+  // ======================================================================
+  // 3. CROSSOVER (Linkwitz-Riley 4th order)
+  // ======================================================================
+  dry_L = spl0;   dry_R = spl1;
+  low_L = xo_lp1_L.bq_tick(spl0);   low_L = xo_lp2_L.bq_tick(low_L);
+  low_R = xo_lp1_R.bq_tick(spl1);   low_R = xo_lp2_R.bq_tick(low_R);
+  high_L = spl0 - low_L;   high_R = spl1 - low_R;
+
+  // ======================================================================
+  // 4. LOW CHANNEL
+  // ======================================================================
+  // 4a. Mono-Low Safety
+  low_mono = (low_L + low_R) * 0.5;
+  low_L = low_mono;   low_R = low_mono;
+
+  // 4b. Bass Focus (80Hz peaking)
+  low_L = bf_L.bq_tick(low_L);   low_R = bf_R.bq_tick(low_R);
+
+  // 4c. Low compressor (RMS, soft knee, character-driven)
+  low_L = comp_low_L.comp_pd_tick(low_L);
+  low_R = comp_low_R.comp_pd_tick(low_R);
+
+  // 4d. Dynamic low saturation
+  sm_low_sat = sm_low_sat * smooth_coeff + slider4 * 0.01 * (1 - smooth_coeff);
+  sm_low_sat > 0.005 ? (
+    low_rms = low_rms_L.rms_tick(low_mono);
+    low_peak = abs(low_mono);
+    sustain_amount = low_rms / (low_peak + 0.00001);
+    sustain_amount = min(sustain_amount, 1);
+    sat_depth = sm_low_sat * (0.4 + 0.6 * sustain_amount);
+    sat_depth *= 0.6 + 0.4 * char_sat_depth;
+    pre  = 1 + sat_depth * 10;
+    post = 1 / (1 + sat_depth * 1.5);
+    low_L = tanh(low_L * pre) * post;
+    low_R = tanh(low_R * pre) * post;
+  );
+
+  // ======================================================================
+  // 5. HIGH CHANNEL
+  // ======================================================================
+  // 5a. Pre-HPF
+  high_L = pre_hpf_L.bq_tick(high_L);   high_R = pre_hpf_R.bq_tick(high_R);
+
+  // 5b. Pre-emphasis
+  high_L = pre_emp_L.bq_tick(high_L);   high_R = pre_emp_R.bq_tick(high_R);
+
+  // 5c. Pre-distortion EQ
+  high_L = pre_scoop_L.bq_tick(high_L);     high_R = pre_scoop_R.bq_tick(high_R);
+  high_L = pre_scoop2_L.bq_tick(high_L);    high_R = pre_scoop2_R.bq_tick(high_R);
+  high_L = pre_800_L.bq_tick(high_L);       high_R = pre_800_R.bq_tick(high_R);
+  high_L = pre_boost_L.bq_tick(high_L);     high_R = pre_boost_R.bq_tick(high_R);
+
+  // 5d. Pre-distortion compressor (character-driven)
+  high_L = comp_high_L.comp_pd_tick(high_L);
+  high_R = comp_high_R.comp_pd_tick(high_R);
+
+  // 5e. Frequency-dependent drive modulation
+  mid_bp_L = bp_L.bq_tick(high_L);
+  mid_energy = abs(mid_bp_L);
+  full_energy = abs(high_L);
+  freq_drive_mod = 0.4 + 0.6 * mid_energy / (full_energy + 0.0001);
+  freq_drive_mod = max(0.4, min(1.0, freq_drive_mod));
+
+  // 5f. Multi-stage drive (oversampled)
+  sm_drive = sm_drive * smooth_coeff + slider7 * 0.01 * (1 - smooth_coeff);
+  sm_drive > 0.005 ? (
+    drive_mult = 2 + sm_drive * 12;
+    char_preamp_drive = char_val(char_t, co_drv) * (0.1 + sm_drive * 2.9);
+
+    // Apply frequency-dependent drive modulation
+    char_preamp_drive = char_preamp_drive * freq_drive_mod;
+
+    os_mode == 0 ? (
+      // No oversampling
+      high_L = distort_multistage(high_L);
+      high_R = distort_multistage(high_R);
+    ) : os_mode == 1 ? (
+      // 2x oversampling (linear interpolation)
+      os_mid_L = (os_prev_L + high_L) * 0.5;
+      os_mid_R = (os_prev_R + high_R) * 0.5;
+      os_prev_L = high_L;   os_prev_R = high_R;
+      y_mid_L  = distort_multistage(os_mid_L);
+      y_mid_R  = distort_multistage(os_mid_R);
+      y_real_L = distort_multistage(high_L);
+      y_real_R = distort_multistage(high_R);
+      os_alias_lp_L.bq_tick(y_mid_L);   os_alias_lp_R.bq_tick(y_mid_R);
+      high_L = os_alias_lp_L.bq_tick(y_real_L);
+      high_R = os_alias_lp_R.bq_tick(y_real_R);
+    ) : (
+      // 4x oversampling (3 interpolated points)
+      os_q1_L = os_prev_L * 0.75 + high_L * 0.25;  os_q1_R = os_prev_R * 0.75 + high_R * 0.25;
+      os_q2_L = (os_prev_L + high_L) * 0.5;        os_q2_R = (os_prev_R + high_R) * 0.5;
+      os_q3_L = os_prev_L * 0.25 + high_L * 0.75;  os_q3_R = os_prev_R * 0.25 + high_R * 0.75;
+      os_prev_L = high_L;   os_prev_R = high_R;
+      y_q1_L = distort_multistage(os_q1_L);   y_q1_R = distort_multistage(os_q1_R);
+      y_q2_L = distort_multistage(os_q2_L);   y_q2_R = distort_multistage(os_q2_R);
+      y_q3_L = distort_multistage(os_q3_L);   y_q3_R = distort_multistage(os_q3_R);
+      y_real_L = distort_multistage(high_L);  y_real_R = distort_multistage(high_R);
+      t1_L = os_aa4_1_L.bq_tick(y_q1_L);  t1_R = os_aa4_1_R.bq_tick(y_q1_R);
+      os_aa4_2_L.bq_tick(t1_L);            os_aa4_2_R.bq_tick(t1_R);
+      t1_L = os_aa4_1_L.bq_tick(y_q2_L);  t1_R = os_aa4_1_R.bq_tick(y_q2_R);
+      os_aa4_2_L.bq_tick(t1_L);            os_aa4_2_R.bq_tick(t1_R);
+      t1_L = os_aa4_1_L.bq_tick(y_q3_L);  t1_R = os_aa4_1_R.bq_tick(y_q3_R);
+      os_aa4_2_L.bq_tick(t1_L);            os_aa4_2_R.bq_tick(t1_R);
+      t1_L = os_aa4_1_L.bq_tick(y_real_L);  t1_R = os_aa4_1_R.bq_tick(y_real_R);
+      high_L = os_aa4_2_L.bq_tick(t1_L);   high_R = os_aa4_2_R.bq_tick(t1_R);
+    );
+  ) : (
+    os_mode == 0 ? (os_prev_L = high_L; os_prev_R = high_R;) :
+    os_mode == 1 ? (os_prev_L = high_L; os_prev_R = high_R;) :
+    (os_prev_L = high_L; os_prev_R = high_R;);
+  );
+
+  // 5g. Post-distortion cleanup
+  high_L = post_mud200_L.bq_tick(high_L);   high_R = post_mud200_R.bq_tick(high_R);
+  high_L = post_mud500_L.bq_tick(high_L);   high_R = post_mud500_R.bq_tick(high_R);
+  high_L = post_2k_L.bq_tick(high_L);       high_R = post_2k_R.bq_tick(high_R);
+  high_L = post_hiss_L.bq_tick(high_L);     high_R = post_hiss_R.bq_tick(high_R);
+
+  // 5h. Post-distortion LPF
+  high_L = post_lpf_L.bq_tick(high_L);      high_R = post_lpf_R.bq_tick(high_R);
+
+  // 5i. Tilt EQ
+  high_L = tone_lo_L.bq_tick(high_L);       high_R = tone_lo_R.bq_tick(high_R);
+  high_L = tone_hi_L.bq_tick(high_L);       high_R = tone_hi_R.bq_tick(high_R);
+
+  // ======================================================================
+  // 6. BLEND
+  // ======================================================================
+  wet_L = low_L + high_L;   wet_R = low_R + high_R;
+  sm_blend = sm_blend * smooth_coeff + slider9 * 0.01 * (1 - smooth_coeff);
+  mix_L = dry_L * (1 - sm_blend) + wet_L * sm_blend;
+  mix_R = dry_R * (1 - sm_blend) + wet_R * sm_blend;
+
+  // ======================================================================
+  // 7. RMS AUTO-GAIN
+  // ======================================================================
+  auto_in_rms = auto_rms_in.rms_tick(abs(dry_L + dry_R) * 0.5);
+  auto_out_rms = auto_rms_out.rms_tick(abs(mix_L + mix_R) * 0.5);
+  auto_out_rms > 0.00001 ? (
+    auto_target = auto_in_rms / auto_out_rms;
+    auto_target = max(0.25, min(4.0, auto_target));
+  );
+  auto_gain = 0.999 * auto_gain + 0.001 * auto_target;
+  mix_L *= auto_gain;
+  mix_R *= auto_gain;
+
+  // ======================================================================
+  // 8. POWER AMPLIFIER STAGE
+  // ======================================================================
+  // 8a. Power amp gentle compression
+  mix_L = pa_comp_L.comp_tick(mix_L);
+  mix_R = pa_comp_R.comp_tick(mix_R);
+
+  // 8b. Low-end damping HPF (character-dependent)
+  mix_L = pa_hpf_L.bq_tick(mix_L);   mix_R = pa_hpf_R.bq_tick(mix_R);
+
+  // 8c. Transformer saturation (iron/nickel blend)
+  trafo_amount = 0.05 + char_t * 0.12;
+  iron_out_L = iron_sat(mix_L * trafo_amount * 2) / 2;
+  nickel_out_L = nickel_sat(mix_L * trafo_amount * 2) / 2;
+  iron_out_R = iron_sat(mix_R * trafo_amount * 2) / 2;
+  nickel_out_R = nickel_sat(mix_R * trafo_amount * 2) / 2;
+  mix_L = mix_L * (1 - trafo_amount) + (iron_out_L * (1 - char_trafo_blend) + nickel_out_L * char_trafo_blend) * trafo_amount;
+  mix_R = mix_R * (1 - trafo_amount) + (iron_out_R * (1 - char_trafo_blend) + nickel_out_R * char_trafo_blend) * trafo_amount;
+
+  // 8d. Soft output limiter (catches peaks)
+  mix_L = tanh(mix_L * 1.05) / 1.05;
+  mix_R = tanh(mix_R * 1.05) / 1.05;
+
+  // ======================================================================
+  // 9. CABINET SIMULATION
+  // ======================================================================
+  slider10 > 0 ? (
+    // Stage 1: HPF cascade (18dB/oct)
+    mix_L = cab_hpf1_L.bq_tick(mix_L);   mix_R = cab_hpf1_R.bq_tick(mix_R);
+    mix_L = cab_hpf2_L.bq_tick(mix_L);   mix_R = cab_hpf2_R.bq_tick(mix_R);
+    mix_L = cab_hpf3_L.bq_tick(mix_L);   mix_R = cab_hpf3_R.bq_tick(mix_R);
+    // Stage 2: Low-mid resonances
+    mix_L = cab_reso1_L.bq_tick(mix_L);  mix_R = cab_reso1_R.bq_tick(mix_R);
+    mix_L = cab_reso2_L.bq_tick(mix_L);  mix_R = cab_reso2_R.bq_tick(mix_R);
+    mix_L = cab_reso3_L.bq_tick(mix_L);  mix_R = cab_reso3_R.bq_tick(mix_R);
+    // Stage 3: Mid scoop notch
+    mix_L = cab_notch_L.bq_tick(mix_L);  mix_R = cab_notch_R.bq_tick(mix_R);
+    // Stage 4: High-mid peaks/notches (cone breakup + high detail)
+    mix_L = cab_peak1_L.bq_tick(mix_L);  mix_R = cab_peak1_R.bq_tick(mix_R);
+    mix_L = cab_peak2_L.bq_tick(mix_L);  mix_R = cab_peak2_R.bq_tick(mix_R);
+    mix_L = cab_peak3_L.bq_tick(mix_L);  mix_R = cab_peak3_R.bq_tick(mix_R);
+    mix_L = cab_peak4_L.bq_tick(mix_L);  mix_R = cab_peak4_R.bq_tick(mix_R);
+    // Stage 5: High shelf presence
+    mix_L = cab_hshelf_L.bq_tick(mix_L); mix_R = cab_hshelf_R.bq_tick(mix_R);
+    // Stage 6: Air shelf
+    mix_L = cab_air_L.bq_tick(mix_L);    mix_R = cab_air_R.bq_tick(mix_R);
+    // Stage 7: High-end saturation + speaker damping (nonlinear)
+    high_L = cab_shpf_L.bq_tick(mix_L);  high_R = cab_shpf_R.bq_tick(mix_R);
+    high_sat_L = tanh(high_L * 1.15);    high_sat_R = tanh(high_R * 1.15);
+    abs_h_L = abs(high_sat_L);           abs_h_R = abs(high_sat_R);
+    abs_h_L > 0.3 ? high_sat_L *= 0.85;  abs_h_R > 0.3 ? high_sat_R *= 0.85;
+    mix_L += (high_sat_L - high_L) * 0.18;
+    mix_R += (high_sat_R - high_R) * 0.18;
+    // Stage 8: LPF cascade (gentler, 12dB/oct equivalent)
+    mix_L = cab_lpf1_L.bq_tick(mix_L);   mix_R = cab_lpf1_R.bq_tick(mix_R);
+    mix_L = cab_lpf2_L.bq_tick(mix_L);   mix_R = cab_lpf2_R.bq_tick(mix_R);
+    // Stage 9: All-pass phase shift (minimum-phase emulation)
+    mix_L = cab_ap1_L.bq_tick(mix_L);    mix_R = cab_ap1_R.bq_tick(mix_R);
+    mix_L = cab_ap2_L.bq_tick(mix_L);    mix_R = cab_ap2_R.bq_tick(mix_R);
+    // Stage 10: Character-dependent resonance
+    mix_L = cab_reso_L.bq_tick(mix_L);   mix_R = cab_reso_R.bq_tick(mix_R);
+  );
+
+  // ======================================================================
+  // 10. OUTPUT GAIN + DC BLOCKER
+  // ======================================================================
+  sm_out_gain = sm_out_gain * smooth_coeff + slider11 * (1 - smooth_coeff);
+  mix_L *= db2amp(sm_out_gain) * 0.25;
+  mix_R *= db2amp(sm_out_gain) * 0.25;
+  spl0 = dc_L.dc_tick(mix_L);
+  spl1 = dc_R.dc_tick(mix_R);

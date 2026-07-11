@@ -1,0 +1,849 @@
+desc:Lozengrad Drumbus One (Saranta Soundworks)
+//tags: drums bus compressor saturation adaptive
+//author: Saranta Soundworks
+
+slider1:intensity=50<0,100,0.1>Intensity (%)
+slider2:inputGainDb=0<-24,24,0.1>Input Gain (dB)
+slider3:outputGainDb=0<-24,24,0.1>Output Gain (dB)
+slider4:autoGainOn=1<0,1,1>Auto Gain
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+/* ==========================================================================
+   SARANTA ADAPTIVE DRUM BUS
+   One knob. Everything else is decided by continuous signal analysis.
+
+   Signal flow (processed in Mid/Side, recombined to L/R at the end):
+   Input -> Analysis -> Decision Engine -> Cleanup EQ -> Transient Shaper
+   -> Compressor -> Saturation -> Tone EQ -> Clipper -> Limiter
+   -> Auto Gain -> Output
+
+   Band-splitting and "EQ" moves here are difference-of-lowpass approximations
+   rather than true parametric filters -- deliberately cheap since this whole
+   engine re-derives itself every CTRL_DIV samples anyway.
+   ========================================================================== */
+
+@init
+
+PI = $pi;
+LN10OVER20 = 0.11512925465; // ln(10)/20, for dB->lin
+TWENTYOVERLN10 = 8.6858896381; // 20/ln(10), for lin->dB
+
+CTRL_DIV = 64;              // decision engine + slow filter coeffs update every CTRL_DIV samples
+ctrl_ctr = 0;
+
+// ---------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------
+function db2lin(db) ( exp(db * LN10OVER20); );
+function lin2db(x)  ( log(max(x, 0.00000316)) * TWENTYOVERLN10; ); // floor ~ -110dB
+function clamp(x, lo, hi) ( max(lo, min(hi, x)); );
+
+// EEL2 has no built-in tanh -- soft-clip approximation via exp(), clamped to avoid overflow
+function tanh_approx(x)
+  local(e2x)
+(
+  x > 9 ? 1 : ( x < -9 ? -1 : ( e2x = exp(2*x); (e2x - 1) / (e2x + 1); ) );
+);
+
+// smoothstep activation curve centered at "center" with transition "width", 0..1
+function curve(x, center, width)
+  local(t)
+(
+  t = (x - center) / width + 0.5;
+  t = clamp(t, 0, 1);
+  t * t * (3 - 2 * t);
+);
+
+// generic one-pole lowpass, used both as a tone filter and as a band splitter
+function lp1_set(freq)
+  instance(a)
+  local(w)
+(
+  w = clamp(freq, 10, srate * 0.45);
+  a = exp(-2 * PI * w / srate);
+);
+function lp1_run(x)
+  instance(a, z)
+(
+  z = z * a + x * (1 - a);
+  z;
+);
+
+// envelope follower with independent attack/release (in ms)
+function env_set(atk_ms, rel_ms)
+  instance(atkc, relc)
+(
+  atkc = exp(-1 / (0.001 * max(atk_ms, 0.02) * srate));
+  relc = exp(-1 / (0.001 * max(rel_ms, 0.02) * srate));
+);
+function env_run(x)
+  instance(atkc, relc, env)
+  local(ax, c)
+(
+  ax = abs(x);
+  c = ax > env ? atkc : relc;
+  env = env * c + ax * (1 - c);
+  env;
+);
+
+// slow "memory" smoother for control-rate parameters: cur = cur*0.95 + target*0.05,
+// time-constant based so it behaves consistently regardless of CTRL_DIV / samplerate
+function mem_set(time_ms)
+  instance(c)
+(
+  c = exp(-1 * CTRL_DIV / (0.001 * max(time_ms, 1) * srate));
+);
+function mem_run(target)
+  instance(c, val)
+(
+  val = val * c + target * (1 - c);
+  val;
+);
+
+// ---------------------------------------------------------------------
+// reusable processing-stage functions (all instance-scoped so mid/side
+// and left/right copies keep independent filter/envelope memory)
+// ---------------------------------------------------------------------
+
+// Adaptive Cleanup EQ: subtle corrective delta-EQ (low shelf / low-mid dip /
+// gentle presence tilt / air shelf), all derived from control-rate globals.
+function cleanupEQ(x)
+  instance(lowF, lm1, lm2, airF, inited)
+  local(lowPart, lmPart, airPart, y)
+(
+  inited == 0 ? (
+    lowF.lp1_set(120);
+    lm1.lp1_set(350);
+    lm2.lp1_set(150);
+    airF.lp1_set(11000);
+    inited = 1;
+  );
+
+  lowPart = lowF.lp1_run(x);
+  lmPart  = lm1.lp1_run(x) - lm2.lp1_run(x);
+  airPart = x - airF.lp1_run(x);
+
+  y = x;
+  y += lowPart * (db2lin(p_eqLowGain) - 1);
+  y += lmPart  * (db2lin(p_eqLMGain)  - 1);
+  y += airPart * (db2lin(p_eqAirGain) - 1);
+  // presence handled as a broad gentle tilt on the "everything else" residual
+  y += (x - lowPart - airPart) * (db2lin(p_eqPresGain * 0.4) - 1) * 0.5;
+  y;
+);
+
+// Adaptive Transient Shaper: fast/slow envelope difference drives attack/sustain gain
+function transShape(x)
+  instance(fastF, slowF, gainSm, inited)
+  local(fe, se, diff, ratio, targetGain)
+(
+  inited == 0 ? (
+    fastF.env_set(0.3, 3);
+    slowF.env_set(15, 60);
+    gainSm = 1;
+    inited = 1;
+  );
+  fe = fastF.env_run(x);
+  se = slowF.env_run(x);
+  diff = fe - se;
+  ratio = diff / max(se, 0.0008); // proportional to how far above/below the slow envelope we are
+  targetGain = 1 + (diff > 0 ? p_transAtk * 0.01 * clamp(ratio, 0, 2) : p_transSus * 0.01 * clamp(-ratio, 0, 2));
+  // fast one-pole smoothing -- kills the sample-to-sample gain jump that caused crackling
+  gainSm = gainSm * 0.85 + targetGain * 0.15;
+  x * clamp(gainSm, 0.3, 1.8);
+);
+
+// Adaptive Compressor (feed-forward, glue style). Coeffs are set at control-rate
+// from outside via env_set() on this same instance before calling compress().
+function compress(x)
+  local(lvl, lvlDb, over, grDb, gr)
+(
+  lvl = this.env_run(x);
+  lvlDb = lin2db(lvl);
+  over = lvlDb - p_compThresh;
+  grDb = over > 0 ? over * (1 - 1 / p_compRatio) : 0;
+  gr = db2lin(-grDb);
+  grLast = grDb;
+  x * gr * db2lin(p_compMakeup);
+);
+
+// Adaptive Saturation: tube / tape / console blend, biased toward highs when
+// low end is dominant (drive and hiBias come from the decision engine).
+function saturate(x, drive, hiBias)
+  local(d, tube, tape, console, y)
+(
+  d = 1 + drive * 6;
+  tube    = tanh_approx(x * d) / tanh_approx(d);
+  tape    = x + 0.12 * x*x * (x >= 0 ? 1 : -1) * drive;
+  console = clamp(x * (1 + 0.3 * drive), -1, 1);
+  y = tube * (0.5 + 0.3*hiBias) + tape * (0.3 - 0.15*hiBias) + console * 0.2;
+  x * (1 - drive*0.6) + y * (drive*0.6);
+);
+
+// Adaptive Tone EQ: undo saturation's tendency to add bite / lose air --
+// a real presence dip (2-5kHz) plus an air shelf, not just a broadband trim.
+function toneEQ(x)
+  instance(airF, hm1, hm2, inited)
+  local(airPart, hmPart, y)
+(
+  inited == 0 ? ( airF.lp1_set(9000); hm1.lp1_set(5000); hm2.lp1_set(2000); inited = 1; );
+  airPart = x - airF.lp1_run(x);
+  hmPart  = hm1.lp1_run(x) - hm2.lp1_run(x);
+  y = x + airPart * (db2lin(p_toneAirComp) - 1) + hmPart * (db2lin(p_toneHMComp) - 1);
+  y;
+);
+
+// Adaptive Clipper: soft saturating clip, threshold adapts to recent peaks
+function clipSoft(x, thresh)
+(
+  thresh > 0.0005 ? thresh * tanh_approx(x / thresh) : x;
+);
+
+// Static composite transfer curve (compressor knee + saturation + clip + limiter
+// ceiling) for a given input level in dB -- used only by the GUI to visualize
+// the combined amplitude-domain shaping; the real audio path still runs the
+// actual time-based stages above.
+function dynTransfer(xdb)
+  local(over, grdb, xlin, ysat, yclip, over2, yfinal)
+(
+  over  = xdb - p_compThresh;
+  grdb  = over > 0 ? over * (1 - 1/p_compRatio) : 0;
+  xlin  = db2lin(xdb - grdb + p_compMakeup);
+  ysat  = saturate(xlin, p_satDrive, p_satHighBias);
+  yclip = clipSoft(ysat, p_clipThreshLin);
+  over2 = yclip / p_limCeilLin;
+  yfinal = over2 > 1 ? yclip * (1 - (1 - 1/over2) * p_limAggr) : yclip;
+  lin2db(max(abs(yfinal), 0.00001));
+);
+
+// Adaptive Limiter: transparent safety stage, coeffs set at control-rate from outside
+function limit(x)
+  local(peak, over, gr)
+(
+  peak = this.env_run(x);
+  over = peak / p_limCeilLin;
+  gr = over > 1 ? 1/over : 1;
+  gr = 1 - (1 - gr) * p_limAggr; // aggressiveness blends how hard it reacts
+  x * gr;
+);
+
+// vertical level meter with green->yellow->red gradient + peak-hold tick
+function drawMeterAdv(x, y, w, h, val, peakHold)
+  local(i, frac, rr, gg, bb, yy)
+(
+  gfx_r=0.07; gfx_g=0.08; gfx_b=0.08; gfx_a=1;
+  gfx_rect(x-1, y-1, w+2, h+2);
+
+  i = 0;
+  loop(h,
+    frac = 1 - i/h; // 0 at bottom, 1 at top
+    frac <= clamp(val,0,1) ? (
+      frac < 0.65 ? ( rr=0.16+0.25*(frac/0.65); gg=0.75; bb=0.45; )
+      : frac < 0.88 ? ( rr=0.85; gg=0.75-0.25*((frac-0.65)/0.23); bb=0.15; )
+      : ( rr=0.9; gg=0.18; bb=0.18; );
+      gfx_r=rr; gfx_g=gg; gfx_b=bb; gfx_a=1;
+      gfx_rect(x, y+i, w, 1);
+    );
+    i += 1;
+  );
+
+  peakHold > 0.01 ? (
+    yy = y + h*(1-clamp(peakHold,0,1));
+    gfx_r=0.9; gfx_g=0.95; gfx_b=0.9; gfx_a=0.9;
+    gfx_rect(x, yy, w, 1.5);
+  );
+);
+
+// small round LED indicator
+function drawLED(x, y, rad, lit, r, g, b)
+(
+  lit ? ( gfx_r=r; gfx_g=g; gfx_b=b; gfx_a=1; )
+      : ( gfx_r=0.15; gfx_g=0.15; gfx_b=0.15; gfx_a=1; );
+  gfx_circle(x, y, rad, 1, 1);
+);
+
+// smoothstep interpolation between two (log-freq, dB) anchor points
+function segInterp(freq, f_a, g_a, f_b, g_b)
+  local(t)
+(
+  t = (log(freq) - log(f_a)) / (log(f_b) - log(f_a));
+  t = clamp(t, 0, 1);
+  t = t*t*(3 - 2*t);
+  g_a + (g_b - g_a) * t;
+);
+
+// combined cleanup-EQ + tone-EQ frequency response, sampled at "freq" Hz
+function eqGainAt(freq)
+(
+  freq <= 120   ? eqG0 :
+  freq <= 300   ? segInterp(freq, 120,  eqG1, 300,   eqG2) :
+  freq <= 800   ? segInterp(freq, 300,  eqG2, 800,   eqG3) :
+  freq <= 1500  ? segInterp(freq, 800,  eqG3, 1500,  eqG4) :
+  freq <= 4500  ? segInterp(freq, 1500, eqG4, 4500,  eqG5) :
+  freq <= 9000  ? segInterp(freq, 4500, eqG5, 9000,  eqG6) :
+  freq <= 12000 ? segInterp(freq, 9000, eqG6, 12000, eqG7) :
+  eqG7;
+);
+// smooth continuous arc (used by the small gain knobs -- a plain line, not dots)
+function drawArc(cx, cy, r, a0, a1, segs)
+  local(i, t, x1, y1)
+(
+  x1 = cx + r*cos(a0); y1 = cy + r*sin(a0);
+  gfx_x = x1; gfx_y = y1;
+  i = 0;
+  loop(segs,
+    i += 1;
+    t = a0 + (a1-a0) * (i/segs);
+    x1 = cx + r*cos(t); y1 = cy + r*sin(t);
+    gfx_lineto(x1, y1, 1);
+  );
+);
+
+function drawKnobArc(cx, cy, r, val01)
+  local(a0, a1, aVal)
+(
+  a0 = 2.35619449; a1 = 7.06858347;
+  aVal = a0 + (a1-a0) * val01;
+  gfx_r=0.20; gfx_g=0.22; gfx_b=0.21; gfx_a=1;
+  drawArc(cx, cy, r, a0, a1, 48);
+  gfx_r=0.23; gfx_g=0.85; gfx_b=0.62; gfx_a=1;
+  drawArc(cx, cy, r, a0, aVal, 48);
+);
+
+// pill / capsule shape (rounded-rect substitute) for the Auto Gain toggle
+function drawPill(x, y, w, h)
+  local(rad)
+(
+  rad = h*0.5;
+  gfx_circle(x+rad, y+rad, rad, 1, 1);
+  gfx_circle(x+w-rad, y+rad, rad, 1, 1);
+  gfx_rect(x+rad, y, w-2*rad, h);
+);
+function drawKnobArcDots(cx, cy, r, val01, dotcount)
+  local(i, t, a0, a1, lx, ly, lit)
+(
+  a0 = 2.35619449; // 135 deg
+  a1 = 7.06858347;  // 405 deg (270 deg sweep)
+  i = 0;
+  loop(dotcount,
+    t = a0 + (a1-a0) * (i / (dotcount-1));
+    lx = cx + r*cos(t);
+    ly = cy + r*sin(t);
+    lit = (i / (dotcount-1)) <= val01;
+    lit ? ( gfx_r=0.23; gfx_g=0.85; gfx_b=0.62; gfx_a=1; )
+        : ( gfx_r=0.18; gfx_g=0.20; gfx_b=0.20; gfx_a=1; );
+    gfx_circle(lx, ly, 2.4, 1, 1);
+    i += 1;
+  );
+);
+
+// ---------------------------------------------------------------------
+// analysis filter bank (runs on the MID signal)
+// low: <120Hz | lowmid: 150-350Hz | presence: 3-6kHz | air: 10-15kHz
+// ---------------------------------------------------------------------
+lowLP.lp1_set(120);
+lowmidLP1.lp1_set(350);
+lowmidLP2.lp1_set(150);
+presLP1.lp1_set(6000);
+presLP2.lp1_set(3000);
+airLP1.lp1_set(15000);
+airLP2.lp1_set(10000);
+
+lowEnvF.env_set(15, 150);
+lowmidEnvF.env_set(15, 150);
+presEnvF.env_set(10, 120);
+airEnvF.env_set(10, 120);
+
+fullEnvF.env_set(15, 250);      // "RMS-ish" loudness follower
+peakEnvF.env_set(0.3, 300);     // fast attack / slow release -> crest factor
+transFastF.env_set(0.5, 5);     // very fast, for transient/density detection
+transSlowF.env_set(30, 80);
+
+midEnvF.env_set(15, 250);
+sideEnvF.env_set(15, 250);
+
+crestSlow = 12;                 // running average crest (dB), seeds decision engine
+crestDevF.env_set(50, 400);     // smoothed |instant crest - slow crest| -> confidence
+
+inLoudF.env_set(20, 300);
+outLoudF.env_set(20, 300);
+
+// ---------------------------------------------------------------------
+// smoothers for the weights the decision engine derives from Intensity + analysis
+// ---------------------------------------------------------------------
+wEQ.mem_set(80);
+wTrans.mem_set(120);
+wComp.mem_set(150);
+wSat.mem_set(150);
+wClip.mem_set(120);
+wLim.mem_set(100);
+confSm.mem_set(300);
+gainTrim.mem_set(400);
+
+// compressor / limiter envelope detectors (coeffs set at control-rate below)
+mCompEnv.env_set(20, 120);
+sCompEnv.env_set(20, 120);
+mLimEnv.env_set(1, 100);
+sLimEnv.env_set(1, 100);
+
+// saturation DC blockers
+mDCx = 0; mDCy = 0;
+sDCx = 0; sDCy = 0;
+
+// meters
+inMeter = 0; outMeter = 0; grMeter = 0; clipFlag = 0; clipHold = 0;
+
+// control-rate parameters (updated every CTRL_DIV samples, used every sample)
+p_eqLowGain = 0; p_eqLMGain = 0; p_eqPresGain = 0; p_eqAirGain = 0;
+p_transAtk = 0; p_transSus = 0;
+p_compThresh = -18; p_compRatio = 1; p_compAtkMs = 20; p_compRelMs = 120; p_compMakeup = 0;
+p_satDrive = 0; p_satHighBias = 0.5;
+p_toneAirComp = 0; p_toneHMComp = 0;
+p_clipThreshLin = 1;
+p_limCeilLin = db2lin(-0.3); p_limAggr = 0.3;
+p_widenAmt = 1.0;
+sideWidenLP.lp1_set(180); // widening only touches content above this -- keeps bass mono/centered
+confidence = 1; crestDb = 12; trim = 0;
+
+// GUI state
+dragging = 0; lastCap = 0; lastClickTime = 0;
+dragStartY = 0; dragStartVal = 0;
+draggingIn = 0; dragStartYIn = 0; dragStartValIn = 0; lastClickTimeIn = 0;
+draggingOut = 0; dragStartYOut = 0; dragStartValOut = 0; lastClickTimeOut = 0;
+inPeakHold = 0; outPeakHold = 0;
+fontsInited = 0;
+eqG0=0; eqG1=0; eqG2=0; eqG3=0; eqG4=0; eqG5=0; eqG6=0; eqG7=0;
+
+@slider
+intensity    = clamp(intensity, 0, 100);
+inputGainDb  = clamp(inputGainDb, -24, 24);
+outputGainDb = clamp(outputGainDb, -24, 24);
+autoGainOn   = clamp(autoGainOn, 0, 1);
+
+@sample
+
+spl0 *= db2lin(inputGainDb);
+spl1 *= db2lin(inputGainDb);
+
+// ---- decompose to mid / side ----
+mid  = (spl0 + spl1) * 0.5;
+side = (spl0 - spl1) * 0.5;
+
+inMeter = max(inMeter * 0.999, max(abs(spl0), abs(spl1)));
+
+// ==========================================================================
+// CONTINUOUS ANALYSIS (every sample, cheap: filters + envelope followers)
+// ==========================================================================
+lowE    = lowEnvF.env_run(lowLP.lp1_run(mid));
+lowmidE = lowmidEnvF.env_run(lowmidLP1.lp1_run(mid) - lowmidLP2.lp1_run(mid));
+presE   = presEnvF.env_run(presLP1.lp1_run(mid) - presLP2.lp1_run(mid));
+airE    = airEnvF.env_run(airLP1.lp1_run(mid) - airLP2.lp1_run(mid));
+
+fullE  = fullEnvF.env_run(mid);
+peakE  = peakEnvF.env_run(mid);
+
+trFast = transFastF.env_run(mid);
+trSlow = transSlowF.env_run(mid);
+
+midE  = midEnvF.env_run(mid);
+sideE = sideEnvF.env_run(side);
+
+// ==========================================================================
+// DECISION ENGINE (runs every CTRL_DIV samples; drives the smoothers)
+// ==========================================================================
+ctrl_ctr += 1;
+ctrl_ctr >= CTRL_DIV ? (
+  ctrl_ctr = 0;
+
+  // --- crest factor & confidence ---
+  crestDb = clamp(lin2db(max(peakE, 0.00001)) - lin2db(max(fullE, 0.00001)), 0, 30);
+  crestSlow = crestSlow * 0.98 + crestDb * 0.02;
+  crestDev = crestDevF.env_run(abs(crestDb - crestSlow));
+  confidence = confSm.mem_run(1 - clamp(crestDev / 10, 0, 1));
+
+  // high crestDb = punchy/transient-rich signal; low = already squashed
+  crestNorm = clamp((crestDb - 6) / 18, 0, 1);
+  rmsDb = lin2db(max(fullE, 0.00001));
+  rmsNorm = clamp((rmsDb - (-30)) / 24, 0, 1);
+
+  lowNorm  = clamp(lin2db(max(lowE,0.00001))    - rmsDb + 10, 0, 20) / 20;
+  lmNorm   = clamp(lin2db(max(lowmidE,0.00001)) - rmsDb + 10, 0, 20) / 20;
+  presNorm = clamp(lin2db(max(presE,0.00001))   - rmsDb + 8,  0, 18) / 18;
+  airNorm  = clamp(lin2db(max(airE,0.00001))    - rmsDb + 14, 0, 20) / 20;
+
+  tdNorm = clamp((trFast - trSlow) / max(trSlow, 0.0005), 0, 4) / 4; // transient density proxy
+  widthNorm = clamp(sideE / max(midE, 0.0001), 0, 1.5) / 1.5;
+
+  // --- base activation from Intensity, per module (nonlinear, staggered ranges) ---
+  baseEQ    = 0.35 + 0.65 * curve(intensity, 10, 24);
+  baseTrans = curve(intensity, 30, 22);
+  baseComp  = curve(intensity, 50, 24);
+  baseSat   = curve(intensity, 45, 60);
+  baseClip  = curve(intensity, 70, 22);
+  baseLim   = 0.15 + 0.85 * curve(intensity, 90, 22);
+
+  // --- analysis-derived modifiers ---
+  crestMod_trans = 0.6 + 0.8 * crestNorm;    // punchy signal -> more transient shaping
+  crestMod_comp  = 1.35 - 0.6 * crestNorm;   // punchy signal -> less compression
+  crestMod_clip  = 1.2  - 0.45 * crestNorm;  // punchy signal -> less clipping
+
+  rmsMod_comp = 1.3 - 0.55 * rmsNorm;        // hot signal -> less compression
+  rmsMod_sat  = 1.2 - 0.45 * rmsNorm;        // hot signal -> less saturation
+  rmsMod_lim  = 0.7 + 0.6  * rmsNorm;        // hot signal -> limiter more ready
+
+  lowMod_sat  = 1.15 - 0.55 * lowNorm;       // bass-heavy -> less (and higher-biased) sat
+  presMod_sat = 1.15 - 0.5  * presNorm;      // harsh presence -> less saturation
+  tdMod_trans = 1.3  - 0.6  * tdNorm;        // already transient-dense -> less enhancement
+
+  confScale = 0.55 + 0.45 * confidence;      // low confidence -> pull everything back
+
+  targetEQ    = clamp(baseEQ, 0, 1.2);
+  targetTrans = clamp(baseTrans * crestMod_trans * tdMod_trans * confScale, 0, 1.4);
+  targetComp  = clamp(baseComp  * crestMod_comp  * rmsMod_comp  * confScale, 0, 1.3);
+  targetSat   = clamp(baseSat   * lowMod_sat * presMod_sat * rmsMod_sat * confScale, 0, 1.3);
+  targetClip  = clamp(baseClip  * crestMod_clip * confScale, 0, 1.2);
+  targetLim   = clamp(baseLim   * rmsMod_lim * (0.7 + 0.3*confScale), 0, 1.3); // limiter keeps a safety floor
+
+  wEQ_v    = wEQ.mem_run(targetEQ);
+  wTrans_v = wTrans.mem_run(targetTrans);
+  wComp_v  = wComp.mem_run(targetComp);
+  wSat_v   = wSat.mem_run(targetSat);
+  wClip_v  = wClip.mem_run(targetClip);
+  wLim_v   = wLim.mem_run(targetLim);
+
+  // --- translate weights into actual DSP parameters ---
+
+  // Cleanup EQ: subtle corrective gains, scaled by how excessive each band is
+  p_eqLowGain  = -2.0 * lowNorm  * wEQ_v;
+  p_eqLMGain   = -1.5 * lmNorm   * wEQ_v;
+  p_eqPresGain = (-1.0 * presNorm + 0.3*(1-presNorm)) * wEQ_v;
+  p_eqAirGain  = (airNorm < 0.4 ? (1 - airNorm*2.5) : 0) * wEQ_v;
+
+  // Transient shaper: attack/sustain % scaled by weight
+  p_transAtk = 35 * wTrans_v;
+  p_transSus = -20 * wTrans_v;
+
+  // Compressor: ratio 1:1->4:1, attack 20->8ms, release 120->60ms
+  p_compRatio  = 1 + 3 * wComp_v;
+  p_compAtkMs  = 20 - 12 * wComp_v;
+  p_compRelMs  = 120 - 60 * wComp_v;
+  p_compThresh = -12 - 14 * wComp_v;
+  p_compMakeup = (p_compThresh * -1) * (1 - 1/p_compRatio) * 0.5 * wComp_v;
+  mCompEnv.env_set(p_compAtkMs, p_compRelMs);
+  sCompEnv.env_set(p_compAtkMs, p_compRelMs);
+
+  // Saturation: drive amount + frequency bias (favor highs when bass-heavy)
+  // (scaled down from the original spec -- calmer default character)
+  p_satDrive    = 0.05 + 0.55 * wSat_v;
+  p_satHighBias = clamp(0.5 + 0.5*lowNorm - 0.3*presNorm, 0, 1);
+
+  // Tone EQ: correct saturation's tendency to add bite / lose air
+  // (real presence dip + air shelf now -- direct dB values, more audible than before)
+  p_toneHMComp  = -(0.4 + 1.1 * p_satDrive);
+  p_toneAirComp =    0.5 + 0.9 * p_satDrive;
+
+  // Clipper: soft threshold, adapts to current peak level (gentler than before)
+  clipCeilDb = -0.3 - 1.6 * (1 - wClip_v);
+  p_clipThreshLin = clamp(db2lin(clipCeilDb) / max(peakE / db2lin(-1), 0.4), db2lin(-4), db2lin(0.3));
+
+  // Limiter: ceiling fixed near true-peak safety, aggressiveness scales reaction speed
+  p_limCeilLin = db2lin(-0.3);
+  p_limAggr = 0.15 + 0.85 * wLim_v;
+  mLimEnv.env_set(1 + 2*(1-p_limAggr), 40 + 150*(1-p_limAggr));
+  sLimEnv.env_set(1 + 2*(1-p_limAggr), 40 + 150*(1-p_limAggr));
+
+  // Subtle stereo widening -- deliberately mild, never more than ~12% side boost
+  p_widenAmt = 1 + 0.03 + 0.08 * (intensity/100);
+
+  // --- anchor gains for the GUI's EQ curve plot (cleanup EQ + tone EQ combined) ---
+  eqG0 = p_eqLowGain;
+  eqG1 = p_eqLowGain;
+  eqG2 = p_eqLMGain;
+  eqG3 = 0;
+  eqG4 = p_eqPresGain * 0.3;
+  eqG5 = p_eqPresGain + p_toneHMComp;
+  eqG6 = p_toneAirComp * 0.5;
+  eqG7 = p_eqAirGain + p_toneAirComp;
+);
+
+// ==========================================================================
+// PROCESSING CHAIN -- applied every sample, in Mid/Side domain
+// ==========================================================================
+
+// 1. Adaptive Cleanup EQ (side gets half correction, so width isn't collapsed)
+mid   = mCleanEQ.cleanupEQ(mid);
+sTmp  = side;
+side  = sCleanEQ.cleanupEQ(side) * 0.5 + sTmp * 0.5;
+
+// 2. Adaptive Transient Shaper (gentler on side)
+mid  = mTransShaper.transShape(mid);
+side = sTransShaper.transShape(side) * 0.7 + side * 0.3;
+
+// 3. Adaptive Compressor (feed-forward, glue style)
+mid   = mCompEnv.compress(mid);
+grMid = grLast;
+side  = sCompEnv.compress(side);
+
+// 4. Adaptive Saturation (tube + tape + console blend)
+mid  = saturate(mid,  p_satDrive, p_satHighBias);
+side = saturate(side, p_satDrive*0.6, p_satHighBias);
+
+// DC blockers post-saturation
+mDCy = mid  - mDCx + 0.995*mDCy; mDCx = mid;  mid  = mDCy;
+sDCy = side - sDCx + 0.995*sDCy; sDCx = side; side = sDCy;
+
+// 5. Adaptive Tone EQ (correct what saturation just did)
+mid  = mToneEQ.toneEQ(mid);
+side = sToneEQ.toneEQ(side);
+
+// 6. Adaptive Clipper (soft, threshold adapts to peaks)
+mid  = clipSoft(mid,  p_clipThreshLin);
+side = clipSoft(side, p_clipThreshLin * 1.3);
+
+// 7. Adaptive Limiter (transparent safety stage)
+mid  = mLimEnv.limit(mid);
+side = sLimEnv.limit(side);
+
+clipFlag = (abs(mid) >= 0.999 || abs(side) >= 0.999) ? 1 : clipFlag;
+
+// ==========================================================================
+// SMART AUTO GAIN (loudness match, long time-constant) -- toggleable
+// ==========================================================================
+inLoud  = inLoudF.env_run(spl0*0.5 + spl1*0.5);
+outLoud = outLoudF.env_run(mid);
+trimDb  = clamp(lin2db(max(inLoud,0.00001)) - lin2db(max(outLoud,0.00001)), -6, 6);
+trim    = gainTrim.mem_run(trimDb);
+gain    = autoGainOn > 0.5 ? db2lin(trim) : 1;
+
+// frequency-safe stereo widening: only the content above ~180Hz gets widened,
+// so low end (kick body, bass) stays centered/mono
+sideLowPart = sideWidenLP.lp1_run(side);
+side = sideLowPart + (side - sideLowPart) * p_widenAmt;
+
+mid  *= gain * db2lin(outputGainDb);
+side *= gain * db2lin(outputGainDb);
+
+// ---- recombine M/S -> L/R ----
+spl0 = mid + side;
+spl1 = mid - side;
+
+grMeter  = grMeter*0.95 + max(0, grMid)*0.05;
+outMeter = max(outMeter*0.999, max(abs(spl0), abs(spl1)));
+
+@gfx 360 400
+
+fontsInited == 0 ? (
+  gfx_setfont(1, "Arial Black", 18);
+  gfx_setfont(2, "Arial", 12);
+  gfx_setfont(3, "Courier New", 11);
+  gfx_setfont(4, "Courier New", 16);
+  gfx_setfont(5, "Courier New", 13);
+  fontsInited = 1;
+);
+
+// ---------------------------------------------------------------------
+// background
+// ---------------------------------------------------------------------
+gfx_r=0.055; gfx_g=0.065; gfx_b=0.06; gfx_a=1;
+gfx_rect(0, 0, gfx_w, gfx_h);
+
+gfx_setfont(1);
+gfx_r=0.23; gfx_g=0.85; gfx_b=0.62; gfx_a=1;
+gfx_x=0; gfx_y=12;
+gfx_drawstr("SARANTA SOUNDWORKS", 1, gfx_w, 34);
+
+gfx_setfont(2);
+gfx_r=0.55; gfx_g=0.58; gfx_b=0.56; gfx_a=1;
+gfx_x=0; gfx_y=34;
+gfx_drawstr("Lozengrad Drumbus One", 1, gfx_w, 54);
+
+// =======================================================================
+// MAIN KNOB -- Intensity, with input/output/GR/clip folded into its own
+// glow, face shading and LED ring
+// =======================================================================
+knobCx = gfx_w * 0.5; knobCy = 150; knobR = 52;
+
+mdx = mouse_x - knobCx; mdy = mouse_y - knobCy;
+overKnob = sqrt(mdx*mdx + mdy*mdy) < knobR + 20;
+
+clickEdge = (mouse_cap & 1) && !lastCap;
+
+clickEdge && overKnob ? (
+  nowT = time_precise();
+  (nowT - lastClickTime) < 0.35 ? (
+    intensity = 50; slider1 = 50; slider_automate(slider1);
+  ) : (
+    dragging = 1; dragStartY = mouse_y; dragStartVal = intensity;
+  );
+  lastClickTime = nowT;
+);
+dragging && (mouse_cap & 1) ? (
+  intensity = clamp(dragStartVal + (dragStartY - mouse_y) * 0.4, 0, 100);
+  slider1 = intensity; slider_automate(slider1);
+);
+!(mouse_cap & 1) ? ( dragging = 0; draggingIn = 0; draggingOut = 0; );
+
+overKnob && mouse_wheel != 0 ? (
+  intensity = clamp(intensity + (mouse_wheel/120)*2, 0, 100);
+  slider1 = intensity; slider_automate(slider1);
+  mouse_wheel = 0;
+);
+
+// soft halo -- brightness follows input level, hue leans warm/cool with
+// the auto-gain trim direction (boosting vs pulling back)
+glowAmt  = clamp(inMeter*1.6, 0, 1);
+trimTint = clamp(trim/6, -1, 1);
+gi = 0;
+loop(4,
+  rGlow = knobR + 16 + gi*7;
+  aGlow = glowAmt * (0.16 - gi*0.03);
+  gfx_r = 0.20 + 0.45*max(trimTint,0);
+  gfx_g = 0.72 + 0.10*max(trimTint,0) - 0.12*max(-trimTint,0);
+  gfx_b = 0.55 + 0.35*max(-trimTint,0);
+  gfx_a = max(aGlow, 0);
+  gfx_circle(knobCx, knobCy, rGlow, 1, 1);
+  gi += 1;
+);
+
+// knob face -- darkens subtly with active gain reduction ("breathing" feel)
+faceDark = clamp(grMeter/10, 0, 1);
+gfx_r = 0.145 - 0.05*faceDark;
+gfx_g = 0.155 - 0.05*faceDark;
+gfx_b = 0.15  - 0.045*faceDark;
+gfx_a = 1;
+gfx_circle(knobCx, knobCy, knobR, 1, 1);
+
+// LED ring -- lit portion shows Intensity value, brightness breathes with
+// output level, and flashes red across the lit dots whenever clipping hits
+ringLit  = intensity/100;
+outBright = 0.55 + 0.45*clamp(outMeter*1.8, 0, 1);
+clipFlag ? ( clipHold += 1; clipHold > 30 ? ( clipFlag = 0; clipHold = 0; ); );
+
+dotN = 34; di = 0;
+loop(dotN,
+  dt = 2.35619449 + (7.06858347 - 2.35619449) * (di/(dotN-1));
+  dlx = knobCx + (knobR+11)*cos(dt);
+  dly = knobCy + (knobR+11)*sin(dt);
+  dLit = (di/(dotN-1)) <= ringLit;
+  dLit && clipFlag ? (
+    gfx_r=0.95; gfx_g=0.2; gfx_b=0.2; gfx_a=1;
+  ) : dLit ? (
+    gfx_r = (0.23 + 0.5*max(trimTint,0)) * outBright;
+    gfx_g = (0.85 + 0.1*max(trimTint,0) - 0.12*max(-trimTint,0)) * outBright;
+    gfx_b = (0.62 + 0.3*max(-trimTint,0)) * outBright;
+    gfx_a = 1;
+  ) : (
+    gfx_r=0.16; gfx_g=0.18; gfx_b=0.18; gfx_a=1;
+  );
+  gfx_circle(dlx, dly, 2.6, 1, 1);
+  di += 1;
+);
+
+gfx_setfont(4);
+gfx_r=0.92; gfx_g=0.96; gfx_b=0.93;
+gfx_x=knobCx-20; gfx_y=knobCy-10;
+gfx_drawstr(sprintf(#skv, "%.0f", intensity), 1|4, knobCx+20, knobCy+10);
+
+// =======================================================================
+// INPUT GAIN (small knob, bottom-left) / OUTPUT GAIN (small knob, bottom-right)
+// / AUTO GAIN switch (between them)
+// =======================================================================
+rowY = knobCy + knobR + 68;
+inCx = knobCx - 90; outCx = knobCx + 90; smallR = 22;
+
+// ---- Input Gain knob ----
+imdx = mouse_x - inCx; imdy = mouse_y - rowY;
+overIn = sqrt(imdx*imdx + imdy*imdy) < smallR + 12;
+
+clickEdge && overIn ? (
+  nowT = time_precise();
+  (nowT - lastClickTimeIn) < 0.35 ? (
+    inputGainDb = 0; slider2 = 0; slider_automate(slider2);
+  ) : (
+    draggingIn = 1; dragStartYIn = mouse_y; dragStartValIn = inputGainDb;
+  );
+  lastClickTimeIn = nowT;
+);
+draggingIn && (mouse_cap & 1) ? (
+  inputGainDb = clamp(dragStartValIn + (dragStartYIn - mouse_y) * 0.3, -24, 24);
+  slider2 = inputGainDb; slider_automate(slider2);
+);
+overIn && mouse_wheel != 0 ? (
+  inputGainDb = clamp(inputGainDb + (mouse_wheel/120)*0.5, -24, 24);
+  slider2 = inputGainDb; slider_automate(slider2);
+  mouse_wheel = 0;
+);
+
+gfx_r=0.11; gfx_g=0.12; gfx_b=0.12; gfx_a=1;
+gfx_circle(inCx, rowY, smallR, 1, 1);
+inVal01 = (inputGainDb+24)/48;
+drawKnobArc(inCx, rowY, smallR+8, inVal01);
+gfx_setfont(5); gfx_r=0.85; gfx_g=0.9; gfx_b=0.87;
+gfx_x=inCx-18; gfx_y=rowY-8;
+gfx_drawstr(sprintf(#igv,"%+.1f",inputGainDb), 1|4, inCx+18, rowY+8);
+gfx_setfont(3); gfx_r=0.4; gfx_g=0.44; gfx_b=0.42;
+gfx_x=inCx-20; gfx_y=rowY+smallR+16;
+gfx_drawstr("IN GAIN", 1, inCx+20, rowY+smallR+28);
+
+// ---- Output Gain knob ----
+omdx = mouse_x - outCx; omdy = mouse_y - rowY;
+overOut = sqrt(omdx*omdx + omdy*omdy) < smallR + 12;
+
+clickEdge && overOut ? (
+  nowT = time_precise();
+  (nowT - lastClickTimeOut) < 0.35 ? (
+    outputGainDb = 0; slider3 = 0; slider_automate(slider3);
+  ) : (
+    draggingOut = 1; dragStartYOut = mouse_y; dragStartValOut = outputGainDb;
+  );
+  lastClickTimeOut = nowT;
+);
+draggingOut && (mouse_cap & 1) ? (
+  outputGainDb = clamp(dragStartValOut + (dragStartYOut - mouse_y) * 0.3, -24, 24);
+  slider3 = outputGainDb; slider_automate(slider3);
+);
+overOut && mouse_wheel != 0 ? (
+  outputGainDb = clamp(outputGainDb + (mouse_wheel/120)*0.5, -24, 24);
+  slider3 = outputGainDb; slider_automate(slider3);
+  mouse_wheel = 0;
+);
+
+gfx_r=0.11; gfx_g=0.12; gfx_b=0.12; gfx_a=1;
+gfx_circle(outCx, rowY, smallR, 1, 1);
+outVal01 = (outputGainDb+24)/48;
+drawKnobArc(outCx, rowY, smallR+8, outVal01);
+gfx_setfont(5); gfx_r=0.85; gfx_g=0.9; gfx_b=0.87;
+gfx_x=outCx-18; gfx_y=rowY-8;
+gfx_drawstr(sprintf(#ogv,"%+.1f",outputGainDb), 1|4, outCx+18, rowY+8);
+gfx_setfont(3); gfx_r=0.4; gfx_g=0.44; gfx_b=0.42;
+gfx_x=outCx-20; gfx_y=rowY+smallR+16;
+gfx_drawstr("OUT GAIN", 1, outCx+20, rowY+smallR+28);
+
+// ---- Auto Gain switch (between the two knobs) ----
+swW=52; swH=22; swX=knobCx-swW*0.5; swY=rowY-swH*0.5;
+overSwitch = mouse_x>=swX && mouse_x<=swX+swW && mouse_y>=swY && mouse_y<=swY+swH;
+
+clickEdge && overSwitch ? (
+  autoGainOn = autoGainOn > 0.5 ? 0 : 1;
+  slider4 = autoGainOn; slider_automate(slider4);
+);
+
+gfx_r = autoGainOn > 0.5 ? 0.14 : 0.10;
+gfx_g = autoGainOn > 0.5 ? 0.22 : 0.10;
+gfx_b = autoGainOn > 0.5 ? 0.18 : 0.10;
+gfx_a=1;
+drawPill(swX, swY, swW, swH);
+gfx_r = autoGainOn > 0.5 ? 0.23 : 0.3; gfx_g = autoGainOn > 0.5 ? 0.85 : 0.3; gfx_b = autoGainOn > 0.5 ? 0.62 : 0.3;
+gfx_a = autoGainOn > 0.5 ? 1 : 0.4;
+knobX = autoGainOn > 0.5 ? swX+swW-swH+3 : swX+3;
+gfx_circle(knobX+ (swH-6)*0.5, swY+swH*0.5, (swH-6)*0.5, 1, 1);
+
+gfx_setfont(3); gfx_r=0.4; gfx_g=0.44; gfx_b=0.42;
+gfx_x=swX-30; gfx_y=swY+swH+10;
+gfx_drawstr("AUTO GAIN", 1, swX+swW+30, swY+swH+22);
+
+lastCap = mouse_cap & 1;
