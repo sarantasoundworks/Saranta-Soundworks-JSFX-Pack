@@ -1,0 +1,906 @@
+desc:Lozengrad Masterbus One (Saranta Soundworks)
+//tags: mastering bus compressor saturation eq limiter adaptive
+//author: Saranta Soundworks
+
+slider1:intensity=50<0,100,0.1>Intensity (%)
+slider2:inputGainDb=0<-24,24,0.1>Input Gain (dB)
+slider3:outputGainDb=0<-24,24,0.1>Output Gain (dB)
+slider4:autoGainOn=1<0,1,1>Auto Gain
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+/* ==========================================================================
+   SARANTA ADAPTIVE MASTER BUS
+   One knob. Everything else is decided by continuous signal analysis.
+
+   Signal flow:
+   Input -> Analysis -> Decision Engine -> Tape Saturation
+   -> Passive Tube EQ -> Soft Clipper -> Bus Compressor
+   -> Precision Mastering EQ (static + dynamic bands)
+   -> True Peak Limiter -> Auto Gain -> Output
+
+   Processing: pure stereo L/R (no mid/side matrix).
+   ========================================================================== */
+
+@init
+
+PI = $pi;
+LN10OVER20 = 0.11512925465;
+TWENTYOVERLN10 = 8.6858896381;
+
+CTRL_DIV = 64;
+ctrl_ctr = 0;
+
+function db2lin(db) ( exp(db * LN10OVER20); );
+function lin2db(x)  ( log(max(x, 0.00000316)) * TWENTYOVERLN10; );
+function clamp(x, lo, hi) ( max(lo, min(hi, x)); );
+function tanh_approx(x)
+  local(e2x)
+(
+  x > 9 ? 1 : ( x < -9 ? -1 : ( e2x = exp(2*x); (e2x - 1) / (e2x + 1); ) );
+);
+
+function curve(x, center, width)
+  local(t)
+(
+  t = (x - center) / width + 0.5;
+  t = clamp(t, 0, 1);
+  t * t * (3 - 2 * t);
+);
+
+// ---- one-pole lowpass ----
+function lp1_set(freq)
+  instance(a)
+  local(w)
+(
+  w = clamp(freq, 10, srate * 0.45);
+  a = exp(-2 * PI * w / srate);
+);
+function lp1_run(x)
+  instance(a, z)
+(
+  z = z * a + x * (1 - a);
+  z;
+);
+function lp1_hp_run(x)
+  instance(a, z)
+(
+  z = z * a + x * (1 - a);
+  x - z;
+);
+
+// ---- envelope follower ----
+function env_set(atk_ms, rel_ms)
+  instance(atkc, relc)
+(
+  atkc = exp(-1 / (0.001 * max(atk_ms, 0.02) * srate));
+  relc = exp(-1 / (0.001 * max(rel_ms, 0.02) * srate));
+);
+function env_run(x)
+  instance(atkc, relc, env)
+  local(ax, c)
+(
+  ax = abs(x);
+  c = ax > env ? atkc : relc;
+  env = env * c + ax * (1 - c);
+  env;
+);
+
+// ---- memory smoother (control-rate) ----
+function mem_set(time_ms)
+  instance(c)
+(
+  c = exp(-1 * CTRL_DIV / (0.001 * max(time_ms, 1) * srate));
+);
+function mem_run(target)
+  instance(c, val)
+(
+  val = val * c + target * (1 - c);
+  val;
+);
+
+// ---- biquad filter (RBJ cookbook, coefficients pre-normalized) ----
+function biquad_lp(f, q)
+  instance(b0, b1, b2, a1, a2, x1, x2, y1, y2)
+  local(w, alpha, c, a0)
+(
+  w = 2 * PI * f / srate;
+  alpha = sin(w) / (2 * q);
+  c = cos(w);
+  b0 = (1 - c) * 0.5;
+  b1 = 1 - c;
+  b2 = (1 - c) * 0.5;
+  a0 = 1 + alpha;
+  a1 = -2 * c;
+  a2 = 1 - alpha;
+  b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+);
+function biquad_hp(f, q)
+  instance(b0, b1, b2, a1, a2, x1, x2, y1, y2)
+  local(w, alpha, c, a0)
+(
+  w = 2 * PI * f / srate;
+  alpha = sin(w) / (2 * q);
+  c = cos(w);
+  b0 = (1 + c) * 0.5;
+  b1 = -(1 + c);
+  b2 = (1 + c) * 0.5;
+  a0 = 1 + alpha;
+  a1 = -2 * c;
+  a2 = 1 - alpha;
+  b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+);
+function biquad_peak(f, q, gainDb)
+  instance(b0, b1, b2, a1, a2, x1, x2, y1, y2)
+  local(w, alpha, A, c, a0)
+(
+  w = 2 * PI * f / srate;
+  A = pow(10, gainDb / 40);
+  alpha = sin(w) / (2 * q);
+  c = cos(w);
+  b0 = 1 + alpha * A;
+  b1 = -2 * c;
+  b2 = 1 - alpha * A;
+  a0 = 1 + alpha / A;
+  a1 = -2 * c;
+  a2 = 1 - alpha / A;
+  b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+);
+function biquad_lowshelf(f, q, gainDb)
+  instance(b0, b1, b2, a1, a2, x1, x2, y1, y2)
+  local(w, A, beta, c, a0, s, sqrtA)
+(
+  w = 2 * PI * f / srate;
+  A = pow(10, gainDb / 40);
+  sqrtA = sqrt(A);
+  beta = sqrt((A + 1/A) * (1/q - 1) + 2);
+  s = sin(w);
+  c = cos(w);
+  a0 = (A + 1) + (A - 1) * c + beta * s;
+  b0 = A * ((A + 1) - (A - 1) * c + beta * s) / a0;
+  b1 = 2 * A * ((A - 1) - (A + 1) * c) / a0;
+  b2 = A * ((A + 1) - (A - 1) * c - beta * s) / a0;
+  a1 = -2 * ((A - 1) + (A + 1) * c) / a0;
+  a2 = ((A + 1) + (A - 1) * c - beta * s) / a0;
+);
+function biquad_highshelf(f, q, gainDb)
+  instance(b0, b1, b2, a1, a2, x1, x2, y1, y2)
+  local(w, A, beta, c, a0, s, sqrtA)
+(
+  w = 2 * PI * f / srate;
+  A = pow(10, gainDb / 40);
+  sqrtA = sqrt(A);
+  beta = sqrt((A + 1/A) * (1/q - 1) + 2);
+  s = sin(w);
+  c = cos(w);
+  a0 = (A + 1) - (A - 1) * c + beta * s;
+  b0 = A * ((A + 1) + (A - 1) * c + beta * s) / a0;
+  b1 = -2 * A * ((A - 1) + (A + 1) * c) / a0;
+  b2 = A * ((A + 1) + (A - 1) * c - beta * s) / a0;
+  a1 = 2 * ((A - 1) - (A + 1) * c) / a0;
+  a2 = ((A + 1) - (A - 1) * c - beta * s) / a0;
+);
+function biquad_bandpass(f, q)
+  instance(b0, b1, b2, a1, a2, x1, x2, y1, y2)
+  local(w, alpha, c, a0)
+(
+  w = 2 * PI * f / srate;
+  alpha = sin(w) / (2 * q);
+  c = cos(w);
+  b0 = alpha;
+  b1 = 0;
+  b2 = -alpha;
+  a0 = 1 + alpha;
+  a1 = -2 * c;
+  a2 = 1 - alpha;
+  b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+);
+function biquad_run(x)
+  instance(b0, b1, b2, a1, a2, x1, x2, y1, y2)
+  local(y)
+(
+  y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+  y2 = y1; y1 = y;
+  x2 = x1; x1 = x;
+  y;
+);
+
+// ==========================================================================
+// MODULE CLASSES
+// ==========================================================================
+
+// ---- Tape Saturation ----
+function tapeSat_set(hzRolloff)
+  instance(hfLp)
+(
+  hfLp.lp1_set(hzRolloff);
+);
+function tapeSat_run(x, drive)
+  instance(hfLp)
+  local(d, sat, satD)
+(
+  d = 1 + drive * 3;
+  satD = x + 0.05 * drive * x * abs(x);
+  sat = tanh_approx(satD * d) / d;
+  sat = hfLp.lp1_run(sat);
+  x + (sat - x) * min(drive * 1.2, 1);
+);
+
+// ---- Soft Clipper ----
+function clip_run(x, thresh)
+(
+  thresh > 0.0005 ? thresh * tanh_approx(x / thresh) : x;
+);
+
+// ---- Bus Compressor (feed-forward VCA, auto release) ----
+function busComp_set(atkMs, relFastMs, relSlowMs, threshDb, ratio, kneeDb)
+  instance(atkc, relFastC, relSlowC, threshLin, r, kneeHalf)
+(
+  atkc = exp(-1 / (0.001 * max(atkMs, 0.02) * srate));
+  relFastC = exp(-1 / (0.001 * max(relFastMs, 0.02) * srate));
+  relSlowC = exp(-1 / (0.001 * max(relSlowMs, 0.02) * srate));
+  threshLin = db2lin(threshDb);
+  r = ratio;
+  kneeHalf = kneeDb * 0.5;
+);
+function busComp_run(x)
+  instance(atkc, relFastC, relSlowC, threshLin, r, kneeHalf, env, grSmooth, makeGain)
+  local(ax, c, relc, od, grDb, gr)
+(
+  ax = abs(x);
+  relc = relFastC + (relSlowC - relFastC) * clamp(grSmooth / 10, 0, 1);
+  c = ax > env ? atkc : relc;
+  env = env * c + ax * (1 - c);
+  od = lin2db(env) - lin2db(threshLin);
+  od > -kneeHalf ? (
+    od > kneeHalf ? (
+      grDb = od * (1 - 1/r);
+    ) : (
+      grDb = ((od + kneeHalf) * (od + kneeHalf) / (4 * kneeHalf)) * (1 - 1/r);
+    );
+  ) : grDb = 0;
+  grSmooth = grSmooth * 0.999 + grDb * 0.001;
+  gr = db2lin(-grDb);
+  makeGain = db2lin(grDb * 0.6);
+  x * gr * makeGain;
+);
+function busComp_gr()
+  instance(env, threshLin, r, kneeHalf)
+  local(od, grDb)
+(
+  od = lin2db(env) - lin2db(threshLin);
+  od > -kneeHalf ? (
+    od > kneeHalf ? (
+      grDb = od * (1 - 1/r);
+    ) : (
+      grDb = ((od + kneeHalf) * (od + kneeHalf) / (4 * kneeHalf)) * (1 - 1/r);
+    );
+  ) : grDb = 0;
+  grDb;
+);
+
+// ---- Dynamic EQ Band ----
+function dynBand_set(freq, q, atkMs, relMs)
+  instance(bp, envF)
+(
+  bp.biquad_bandpass(freq, q);
+  envF.env_set(atkMs, relMs);
+);
+function dynBand_run(x, amountDb, threshold, mode)
+  instance(bp, envF)
+  local(band, bandEnv, gainDb, gr)
+(
+  band = bp.biquad_run(x);
+  bandEnv = envF.env_run(band);
+  mode == 0 ? (
+    bandEnv < threshold ? (
+      gr = 1 + (db2lin(amountDb) - 1) * (1 - bandEnv / max(threshold, 0.000001));
+    ) : gr = 1;
+  ) : (
+    bandEnv > threshold ? (
+      gr = 1 + (db2lin(-amountDb) - 1) * min(bandEnv / max(threshold, 0.000001) - 1, 1);
+    ) : gr = 1;
+  );
+  x + band * (gr - 1);
+);
+
+// ---- True Peak Limiter ----
+function tpLimit_set(atkMs, relMs, ceilDb)
+  instance(atkc, relc, ceilLin)
+(
+  atkc = exp(-1 / (0.001 * max(atkMs, 0.02) * srate));
+  relc = exp(-1 / (0.001 * max(relMs, 0.02) * srate));
+  ceilLin = db2lin(ceilDb);
+);
+function tpLimit_run(x)
+  instance(atkc, relc, ceilLin, env, x1)
+  local(ax, c, over, gr, os)
+(
+  ax = abs(x);
+  os = max(ax, abs(x + x1) * 0.5);
+  x1 = x;
+  c = os > env ? atkc : relc;
+  env = env * c + os * (1 - c);
+  over = env / ceilLin;
+  gr = over > 1 ? 1/over : 1;
+  x * gr;
+);
+
+// ==========================================================================
+// INSTANCES
+// ==========================================================================
+
+// Tape saturation (L/R)
+mTape.tapeSat_set(15000);
+sTape.tapeSat_set(15000);
+
+// Passive Tube EQ bands (L/R, 4 bands each)
+// Band 1: 68Hz Bell, widest BW (Q=0.35)
+mPte1.biquad_peak(68, 0.35, 0);
+sPte1.biquad_peak(68, 0.35, 0);
+// Band 2: 580Hz Bell, widest BW (Q=0.35)
+mPte2.biquad_peak(580, 0.35, 0);
+sPte2.biquad_peak(580, 0.35, 0);
+// Band 3: 3.3kHz Bell, widest BW (Q=0.35)
+mPte3.biquad_peak(3300, 0.35, 0);
+sPte3.biquad_peak(3300, 0.35, 0);
+// Band 4: 16kHz Shelf, widest BW (Q=0.35)
+mPte4.biquad_highshelf(16000, 0.35, 0);
+sPte4.biquad_highshelf(16000, 0.35, 0);
+
+// Bus compressors (L/R) - initial values; updated every control cycle
+mBusComp.busComp_set(30, 40, 400, -18, 2, 6);
+sBusComp.busComp_set(30, 40, 400, -18, 2, 6);
+
+// Precision EQ - Static bands (L/R)
+// 30Hz HPF (1st-order, 6dB/oct)
+mHpf30.lp1_set(30);
+sHpf30.lp1_set(30);
+// 40Hz Low Shelf +3dB
+mLs40.biquad_lowshelf(40, 0.5, 3);
+sLs40.biquad_lowshelf(40, 0.5, 3);
+// 1kHz Cut (subtle)
+mCut1k.biquad_peak(1000, 0.7, -0.25);
+sCut1k.biquad_peak(1000, 0.7, -0.25);
+// 10kHz Boost
+mBoost10k.biquad_peak(10000, 1.1, 1.2);
+sBoost10k.biquad_peak(10000, 1.1, 1.2);
+// 14kHz High Shelf +4dB (air/brightness)
+mHs14k.biquad_highshelf(14000, 0.707, 4);
+sHs14k.biquad_highshelf(14000, 0.707, 4);
+// 20kHz Low Shelf +1dB
+mLs20k.biquad_lowshelf(20000, 0.7, 1);
+sLs20k.biquad_lowshelf(20000, 0.7, 1);
+
+
+// Precision EQ - Dynamic bands (L/R)
+// 40Hz dynamic boost +1dB
+mDyn40.dynBand_set(40, 0.5, 30, 150);
+sDyn40.dynBand_set(40, 0.5, 30, 150);
+// 85Hz dynamic cut -2dB
+mDyn85.dynBand_set(85, 0.35, 30, 150);
+sDyn85.dynBand_set(85, 0.35, 30, 150);
+// 10kHz dynamic boost +0.8dB
+mDyn10k.dynBand_set(10000, 1.1, 20, 120);
+sDyn10k.dynBand_set(10000, 1.1, 20, 120);
+// 14kHz dynamic cut -2dB (gentle de-ess only)
+mDyn14k.dynBand_set(12000, 0.707, 15, 100);
+sDyn14k.dynBand_set(12000, 0.707, 15, 100);
+
+// True peak limiters (L/R)
+mLim.tpLimit_set(0.5, 80, -1);
+sLim.tpLimit_set(0.5, 80, -1);
+
+// ---- analysis filters ----
+subLP1.lp1_set(80);   subLP2.lp1_set(20);
+lowLP1.lp1_set(250);  lowLP2.lp1_set(80);
+midLP1.lp1_set(2000); midLP2.lp1_set(250);
+presLP1.lp1_set(6000); presLP2.lp1_set(2000);
+airLP1.lp1_set(15000); airLP2.lp1_set(6000);
+fullEnvF.env_set(15, 250);
+peakEnvF.env_set(0.3, 300);
+transFastF.env_set(0.5, 5);
+transSlowF.env_set(30, 80);
+subEnv.env_set(20, 150);
+lowEnv.env_set(20, 150);
+midEnv.env_set(20, 150);
+presEnv.env_set(15, 120);
+airEnv.env_set(10, 100);
+sideEnvF.env_set(20, 200);
+
+// ---- control-rate smoothers ----
+wTape.mem_set(180);
+wPte.mem_set(150);
+wClip.mem_set(120);
+wComp.mem_set(150);
+wEQ.mem_set(120);
+wDynEQ.mem_set(180);
+wLim.mem_set(100);
+confSm.mem_set(300);
+gainTrim.mem_set(400);
+
+// ---- control-rate params ----
+p_tapeDrive = 0;
+p_pteAmt = 0;
+p_clipThreshLin = 1;
+p_compThresh = -18; p_compRatio = 2; p_compAtk = 30;
+p_eqScale = 0;
+p_dynAmt = 0;
+p_dynThreshold = -24;
+p_limAggr = 0.3;
+
+// ---- Passive Tube EQ target gains ----
+// Passive Tube EQ target gains
+pteGain1 = 4;     // 68Hz: actual ~+4dB
+pteGain2 = -2.1;  // 580Hz: actual ~-2.1dB
+pteGain3 = 3;     // 3.3kHz: actual ~+3dB
+pteGain4 = 3;     // 16kHz: actual ~+3dB shelf
+
+// ---- meters & state ----
+inMeter = 0; outMeter = 0; grMeter = 0; clipFlag = 0; clipHold = 0;
+confidence = 1; crestDb = 12; crestSlow = 12; trim = 0;
+
+// ---- GUI state ----
+dragging = 0; lastCap = 0; lastClickTime = 0;
+dragStartY = 0; dragStartVal = 0;
+draggingIn = 0; dragStartYIn = 0; dragStartValIn = 0; lastClickTimeIn = 0;
+draggingOut = 0; dragStartYOut = 0; dragStartValOut = 0; lastClickTimeOut = 0;
+inPeakHold = 0; outPeakHold = 0;
+fontsInited = 0;
+
+// DC blockers
+mDCx = 0; mDCy = 0;
+sDCx = 0; sDCy = 0;
+
+// loudness for auto gain
+inLoudF.env_set(20, 300);
+outLoudF.env_set(20, 300);
+
+@slider
+intensity    = clamp(intensity, 0, 100);
+inputGainDb  = clamp(inputGainDb, -24, 24);
+outputGainDb = clamp(outputGainDb, -24, 24);
+autoGainOn   = clamp(autoGainOn, 0, 1);
+
+@sample
+
+spl0 *= db2lin(inputGainDb);
+spl1 *= db2lin(inputGainDb);
+
+inMeter = max(inMeter * 0.999, max(abs(spl0), abs(spl1)));
+
+// ==========================================================================
+// CONTINUOUS ANALYSIS (every sample)
+// ==========================================================================
+
+subE  = subEnv.env_run(subLP1.lp1_run(spl0) - subLP2.lp1_run(spl0));
+lowE  = lowEnv.env_run(lowLP1.lp1_run(spl0) - lowLP2.lp1_run(spl0));
+midE  = midEnv.env_run(midLP1.lp1_run(spl0) - midLP2.lp1_run(spl0));
+presE = presEnv.env_run(presLP1.lp1_run(spl0) - presLP2.lp1_run(spl0));
+airE  = airEnv.env_run(airLP1.lp1_run(spl0) - airLP2.lp1_run(spl0));
+
+fullE  = fullEnvF.env_run(spl0);
+peakE  = peakEnvF.env_run(spl0);
+
+trFast = transFastF.env_run(spl0);
+trSlow = transSlowF.env_run(spl0);
+
+// ==========================================================================
+// DECISION ENGINE (runs every CTRL_DIV samples)
+// ==========================================================================
+ctrl_ctr += 1;
+ctrl_ctr >= CTRL_DIV ? (
+  ctrl_ctr = 0;
+
+  crestDb = clamp(lin2db(max(peakE, 0.00001)) - lin2db(max(fullE, 0.00001)), 0, 30);
+  crestDev = crestDev * 0.9 + abs(crestDb - crestSlow) * 0.1;
+  crestSlow = crestSlow * 0.98 + crestDb * 0.02;
+  confidence = confSm.mem_run(1 - clamp(crestDev / 10, 0, 1));
+
+  crestNorm = clamp((crestDb - 4) / 20, 0, 1);
+  rmsDb = lin2db(max(fullE, 0.00001));
+  rmsNorm = clamp((rmsDb - (-30)) / 24, 0, 1);
+
+  subNorm   = clamp(lin2db(max(subE,0.00001))  - rmsDb + 14, 0, 20) / 20;
+  lowNorm   = clamp(lin2db(max(lowE,0.00001))  - rmsDb + 10, 0, 20) / 20;
+  midNorm   = clamp(lin2db(max(midE,0.00001))  - rmsDb + 8,  0, 18) / 18;
+  presNorm  = clamp(lin2db(max(presE,0.00001)) - rmsDb + 8,  0, 18) / 18;
+  airNorm   = clamp(lin2db(max(airE,0.00001))  - rmsDb + 14, 0, 20) / 20;
+
+  tdNorm = clamp((trFast - trSlow) / max(trSlow, 0.0005), 0, 4) / 4;
+  widthNorm = clamp(sideE / max(fullE, 0.0001), 0, 1.5) / 1.5;
+
+  baseTape  = curve(intensity, 10, 20);
+  basePte = curve(intensity, 15, 25);
+  baseClip  = curve(intensity, 30, 22);
+  baseComp  = curve(intensity, 40, 28);
+  // S-curve: flat 0-50, steep 50-100
+  baseEQ    = intensity <= 50 ? intensity * 0.004 : 0.2 + 0.8 * pow((intensity - 50) / 50, 1.8);
+  baseDynEQ = curve(intensity, 35, 25);
+  baseLim   = 0.1 + 0.9 * curve(intensity, 75, 30);
+
+  tapeMod  = 0.8 + 0.4 * (1 - rmsNorm);
+  manMod   = 0.7 + 0.3 * (1 - crestNorm);
+  clipMod  = 0.6 + 0.8 * crestNorm;
+  compMod  = 1.3 - 0.5 * crestNorm;
+  dynMod   = 0.7 + 0.5 * tdNorm;
+  limMod   = 0.7 + 0.5 * rmsNorm;
+
+  confScale = 0.5 + 0.5 * confidence;
+
+  targetTape  = clamp(baseTape  * tapeMod * confScale, 0, 1.0);
+  targetPte = clamp(basePte * manMod * confScale, 0, 1.0);
+  targetClip  = clamp(baseClip  * clipMod * confScale, 0, 1.0);
+  targetComp  = clamp(baseComp  * compMod * confScale, 0, 1.2);
+  targetEQ    = clamp(baseEQ, 0, 1);
+  targetDynEQ = clamp(baseDynEQ * dynMod * confScale, 0, 1.0);
+  targetLim   = clamp(baseLim   * limMod * confScale, 0, 1.3);
+
+  wTape_v   = wTape.mem_run(targetTape);
+  wPte_v = wPte.mem_run(targetPte);
+  wClip_v   = wClip.mem_run(targetClip);
+  wComp_v   = wComp.mem_run(targetComp);
+  wEQ_v     = wEQ.mem_run(targetEQ);
+  wDyn_v    = wDynEQ.mem_run(targetDynEQ);
+  wLim_v    = wLim.mem_run(targetLim);
+
+  // --- translate weights into DSP parameters ---
+
+  p_tapeDrive = 0.02 + 0.3 * wTape_v;
+
+  p_pteAmt = wPte_v;
+mPte1.biquad_peak(68, 0.35, pteGain1 * p_pteAmt);
+mPte2.biquad_peak(580, 0.35, pteGain2 * p_pteAmt);
+mPte3.biquad_peak(3300, 0.35, pteGain3 * p_pteAmt);
+mPte4.biquad_highshelf(16000, 0.35, pteGain4 * p_pteAmt);
+sPte1.biquad_peak(68, 0.35, pteGain1 * p_pteAmt);
+sPte2.biquad_peak(580, 0.35, pteGain2 * p_pteAmt);
+sPte3.biquad_peak(3300, 0.35, pteGain3 * p_pteAmt);
+sPte4.biquad_highshelf(16000, 0.35, pteGain4 * p_pteAmt);
+
+  clipCeilDb = -0.3 - 1.5 * (1 - wClip_v);
+  p_clipThreshLin = clamp(db2lin(clipCeilDb), db2lin(-3), db2lin(-0.3));
+
+  intensity <= 50 ? (
+    p_compAtk = 30;
+    p_compRatio = 1.5 + 1.5 * (intensity / 50);
+    p_compThresh = -12 - 10 * (intensity / 50);
+  ) : (
+    p_compAtk = 30 - 20 * ((intensity - 50) / 50);
+    p_compRatio = 3 + 1.5 * ((intensity - 50) / 50);
+    p_compThresh = -22 - 4 * ((intensity - 50) / 50);
+  );
+  p_compThresh = max(p_compThresh, -30);
+  mBusComp.busComp_set(max(p_compAtk, 2), 40, 400, p_compThresh, p_compRatio, 6);
+  sBusComp.busComp_set(max(p_compAtk, 2), 40, 400, p_compThresh + 2, p_compRatio, 6);
+
+  p_eqScale = wEQ_v;
+  p_dynAmt = wDyn_v;
+  p_dynThreshold = -24 + 8 * (1 - wDyn_v);
+
+  p_limAggr = 0.1 + 0.7 * wLim_v;
+);
+
+// ==========================================================================
+// PROCESSING CHAIN
+// ==========================================================================
+
+// 1. Tape Saturation
+spl0 = mTape.tapeSat_run(spl0, p_tapeDrive);
+spl1 = sTape.tapeSat_run(spl1, p_tapeDrive);
+
+// 2. Passive Tube EQ (4 bands)
+spl0 = mPte1.biquad_run(spl0);
+spl0 = mPte2.biquad_run(spl0);
+spl0 = mPte3.biquad_run(spl0);
+spl0 = mPte4.biquad_run(spl0);
+spl1 = sPte1.biquad_run(spl1);
+spl1 = sPte2.biquad_run(spl1);
+spl1 = sPte3.biquad_run(spl1);
+spl1 = sPte4.biquad_run(spl1);
+
+// 3. Soft Clipper
+spl0 = clip_run(spl0, p_clipThreshLin);
+spl1 = clip_run(spl1, p_clipThreshLin);
+
+// 4. Bus Compressor
+spl0  = mBusComp.busComp_run(spl0);
+grMid = mBusComp.busComp_gr();
+spl1  = sBusComp.busComp_run(spl1);
+
+// DC blockers post-saturation + compression
+mDCy = spl0 - mDCx + 0.995*mDCy; mDCx = spl0; spl0 = mDCy;
+sDCy = spl1 - sDCx + 0.995*sDCy; sDCx = spl1; spl1 = sDCy;
+
+// 5. Precision Mastering EQ - Static Section (dry/wet blend with p_eqScale)
+// 30Hz HPF always on (1st-order, 6dB/oct)
+spl0 = mHpf30.lp1_hp_run(spl0);
+spl1 = sHpf30.lp1_hp_run(spl1);
+// Save dry reference (post-HPF) for wet/dry blend
+mEqDry = spl0;
+sEqDry = spl1;
+// Process wet path through all tonal bands
+mEqWet = mLs40.biquad_run(mEqDry);
+sEqWet = sLs40.biquad_run(sEqDry);
+mEqWet = mCut1k.biquad_run(mEqWet);
+sEqWet = sCut1k.biquad_run(sEqWet);
+mEqWet = mBoost10k.biquad_run(mEqWet);
+sEqWet = sBoost10k.biquad_run(sEqWet);
+mEqWet = mHs14k.biquad_run(mEqWet);
+sEqWet = sHs14k.biquad_run(sEqWet);
+mEqWet = mLs20k.biquad_run(mEqWet);
+sEqWet = sLs20k.biquad_run(sEqWet);
+// Blend: 0 = HPF only, 1 = full EQ
+spl0 = mEqDry + (mEqWet - mEqDry) * p_eqScale * 0.7;
+spl1 = sEqDry + (sEqWet - sEqDry) * p_eqScale * 0.7;
+
+// 6. Precision Mastering EQ - Dynamic Section
+spl0 = mDyn40.dynBand_run(spl0,  1.0 * p_dynAmt,  db2lin(p_dynThreshold), 0);
+spl1 = sDyn40.dynBand_run(spl1, 1.0 * p_dynAmt,  db2lin(p_dynThreshold), 0);
+spl0 = mDyn85.dynBand_run(spl0,  2.0 * p_dynAmt,  db2lin(p_dynThreshold), 1);
+spl1 = sDyn85.dynBand_run(spl1, 2.0 * p_dynAmt,  db2lin(p_dynThreshold), 1);
+spl0 = mDyn10k.dynBand_run(spl0, 0.8 * p_dynAmt,  db2lin(p_dynThreshold + 4), 0);
+spl1 = sDyn10k.dynBand_run(spl1, 0.8 * p_dynAmt, db2lin(p_dynThreshold + 4), 0);
+spl0 = mDyn14k.dynBand_run(spl0, 2.0 * p_dynAmt,  db2lin(p_dynThreshold + 6), 1);
+spl1 = sDyn14k.dynBand_run(spl1, 2.0 * p_dynAmt,  db2lin(p_dynThreshold + 6), 1);
+
+// 7. True Peak Limiter
+spl0 = mLim.tpLimit_run(spl0);
+spl1 = sLim.tpLimit_run(spl1);
+
+clipFlag = (abs(spl0) >= 0.999 || abs(spl1) >= 0.999) ? 1 : clipFlag;
+
+// ==========================================================================
+// AUTO GAIN
+// ==========================================================================
+inLoud  = inLoudF.env_run(spl0*0.5 + spl1*0.5);
+outLoud = outLoudF.env_run(spl0);
+trimDb  = clamp(lin2db(max(inLoud,0.00001)) - lin2db(max(outLoud,0.00001)), -6, 6);
+trim    = gainTrim.mem_run(trimDb);
+gain    = autoGainOn > 0.5 ? db2lin(trim) : 1;
+
+spl0 *= gain * db2lin(outputGainDb);
+spl1 *= gain * db2lin(outputGainDb);
+
+grMeter  = grMeter*0.95 + max(0, grMid)*0.05;
+outMeter = max(outMeter*0.999, max(abs(spl0), abs(spl1)));
+
+// ==========================================================================
+// GFX (same layout as other Lozengrad buses)
+// ==========================================================================
+
+@gfx 360 400
+
+fontsInited == 0 ? (
+  gfx_setfont(1, "Arial Black", 18);
+  gfx_setfont(2, "Arial", 12);
+  gfx_setfont(3, "Courier New", 11);
+  gfx_setfont(4, "Courier New", 16);
+  gfx_setfont(5, "Courier New", 13);
+  fontsInited = 1;
+);
+
+function drawArc(cx, cy, r, a0, a1, segs)
+  local(i, t, x1, y1)
+(
+  x1 = cx + r*cos(a0); y1 = cy + r*sin(a0);
+  gfx_x = x1; gfx_y = y1;
+  i = 0;
+  loop(segs,
+    i += 1;
+    t = a0 + (a1-a0) * (i/segs);
+    x1 = cx + r*cos(t); y1 = cy + r*sin(t);
+    gfx_lineto(x1, y1, 1);
+  );
+);
+
+function drawKnobArc(cx, cy, r, val01)
+  local(a0, a1, aVal)
+(
+  a0 = 2.35619449; a1 = 7.06858347;
+  aVal = a0 + (a1-a0) * val01;
+  gfx_r=0.20; gfx_g=0.22; gfx_b=0.21; gfx_a=1;
+  drawArc(cx, cy, r, a0, a1, 48);
+  gfx_r=0.23; gfx_g=0.85; gfx_b=0.62; gfx_a=1;
+  drawArc(cx, cy, r, a0, aVal, 48);
+);
+
+gfx_r=0.055; gfx_g=0.065; gfx_b=0.06; gfx_a=1;
+gfx_rect(0, 0, gfx_w, gfx_h);
+
+gfx_setfont(1);
+gfx_r=0.23; gfx_g=0.85; gfx_b=0.62; gfx_a=1;
+gfx_x=0; gfx_y=12;
+gfx_drawstr("SARANTA SOUNDWORKS", 1, gfx_w, 34);
+
+gfx_setfont(2);
+gfx_r=0.55; gfx_g=0.58; gfx_b=0.56; gfx_a=1;
+gfx_x=0; gfx_y=34;
+gfx_drawstr("Lozengrad Masterbus One", 1, gfx_w, 54);
+
+// =======================================================================
+// MAIN KNOB
+// =======================================================================
+knobCx = gfx_w * 0.5; knobCy = 150; knobR = 52;
+
+mdx = mouse_x - knobCx; mdy = mouse_y - knobCy;
+overKnob = sqrt(mdx*mdx + mdy*mdy) < knobR + 20;
+
+clickEdge = (mouse_cap & 1) && !lastCap;
+
+clickEdge && overKnob ? (
+  nowT = time_precise();
+  (nowT - lastClickTime) < 0.35 ? (
+    intensity = 50; slider1 = 50; slider_automate(slider1);
+  ) : (
+    dragging = 1; dragStartY = mouse_y; dragStartVal = intensity;
+  );
+  lastClickTime = nowT;
+);
+dragging && (mouse_cap & 1) ? (
+  intensity = clamp(dragStartVal + (dragStartY - mouse_y) * 0.4, 0, 100);
+  slider1 = intensity; slider_automate(slider1);
+);
+!(mouse_cap & 1) ? ( dragging = 0; draggingIn = 0; draggingOut = 0; );
+
+overKnob && mouse_wheel != 0 ? (
+  intensity = clamp(intensity + (mouse_wheel/120)*2, 0, 100);
+  slider1 = intensity; slider_automate(slider1);
+  mouse_wheel = 0;
+);
+
+glowAmt  = clamp(inMeter*1.6, 0, 1);
+trimTint = clamp(trim/6, -1, 1);
+gi = 0;
+loop(4,
+  rGlow = knobR + 16 + gi*7;
+  aGlow = glowAmt * (0.16 - gi*0.03);
+  gfx_r = 0.20 + 0.45*max(trimTint,0);
+  gfx_g = 0.72 + 0.10*max(trimTint,0) - 0.12*max(-trimTint,0);
+  gfx_b = 0.55 + 0.35*max(-trimTint,0);
+  gfx_a = max(aGlow, 0);
+  gfx_circle(knobCx, knobCy, rGlow, 1, 1);
+  gi += 1;
+);
+
+faceDark = clamp(grMeter/10, 0, 1);
+gfx_r = 0.145 - 0.05*faceDark;
+gfx_g = 0.155 - 0.05*faceDark;
+gfx_b = 0.15  - 0.045*faceDark;
+gfx_a = 1;
+gfx_circle(knobCx, knobCy, knobR, 1, 1);
+
+ringLit  = intensity/100;
+outBright = 0.55 + 0.45*clamp(outMeter*1.8, 0, 1);
+clipFlag ? ( clipHold += 1; clipHold > 30 ? ( clipFlag = 0; clipHold = 0; ); );
+
+dotN = 34; di = 0;
+loop(dotN,
+  dt = 2.35619449 + (7.06858347 - 2.35619449) * (di/(dotN-1));
+  dlx = knobCx + (knobR+11)*cos(dt);
+  dly = knobCy + (knobR+11)*sin(dt);
+  dLit = (di/(dotN-1)) <= ringLit;
+  dLit && clipFlag ? (
+    gfx_r=0.95; gfx_g=0.2; gfx_b=0.2; gfx_a=1;
+  ) : dLit ? (
+    gfx_r = (0.23 + 0.5*max(trimTint,0)) * outBright;
+    gfx_g = (0.85 + 0.1*max(trimTint,0) - 0.12*max(-trimTint,0)) * outBright;
+    gfx_b = (0.62 + 0.3*max(-trimTint,0)) * outBright;
+    gfx_a = 1;
+  ) : (
+    gfx_r=0.16; gfx_g=0.18; gfx_b=0.18; gfx_a=1;
+  );
+  gfx_circle(dlx, dly, 2.6, 1, 1);
+  di += 1;
+);
+
+gfx_setfont(4);
+gfx_r=0.92; gfx_g=0.96; gfx_b=0.93;
+gfx_x=knobCx-20; gfx_y=knobCy-10;
+gfx_drawstr(sprintf(#skv, "%.0f", intensity), 1|4, knobCx+20, knobCy+10);
+
+// =======================================================================
+// INPUT GAIN / OUTPUT GAIN / AUTO GAIN SWITCH
+// =======================================================================
+rowY = knobCy + knobR + 68;
+inCx = knobCx - 90; outCx = knobCx + 90; smallR = 22;
+
+// ---- Input Gain knob ----
+imdx = mouse_x - inCx; imdy = mouse_y - rowY;
+overIn = sqrt(imdx*imdx + imdy*imdy) < smallR + 12;
+
+clickEdge && overIn ? (
+  nowT = time_precise();
+  (nowT - lastClickTimeIn) < 0.35 ? (
+    inputGainDb = 0; slider2 = 0; slider_automate(slider2);
+  ) : (
+    draggingIn = 1; dragStartYIn = mouse_y; dragStartValIn = inputGainDb;
+  );
+  lastClickTimeIn = nowT;
+);
+draggingIn && (mouse_cap & 1) ? (
+  inputGainDb = clamp(dragStartValIn + (dragStartYIn - mouse_y) * 0.3, -24, 24);
+  slider2 = inputGainDb; slider_automate(slider2);
+);
+overIn && mouse_wheel != 0 ? (
+  inputGainDb = clamp(inputGainDb + (mouse_wheel/120)*0.5, -24, 24);
+  slider2 = inputGainDb; slider_automate(slider2);
+  mouse_wheel = 0;
+);
+
+gfx_r=0.11; gfx_g=0.12; gfx_b=0.12; gfx_a=1;
+gfx_circle(inCx, rowY, smallR, 1, 1);
+inVal01 = (inputGainDb+24)/48;
+drawKnobArc(inCx, rowY, smallR+8, inVal01);
+gfx_setfont(5); gfx_r=0.85; gfx_g=0.9; gfx_b=0.87;
+gfx_x=inCx-18; gfx_y=rowY-8;
+gfx_drawstr(sprintf(#igv,"%+.1f",inputGainDb), 1|4, inCx+18, rowY+8);
+gfx_setfont(3); gfx_r=0.4; gfx_g=0.44; gfx_b=0.42;
+gfx_x=inCx-20; gfx_y=rowY+smallR+16;
+gfx_drawstr("IN GAIN", 1, inCx+20, rowY+smallR+28);
+
+// ---- Output Gain knob ----
+omdx = mouse_x - outCx; omdy = mouse_y - rowY;
+overOut = sqrt(omdx*omdx + omdy*omdy) < smallR + 12;
+
+clickEdge && overOut ? (
+  nowT = time_precise();
+  (nowT - lastClickTimeOut) < 0.35 ? (
+    outputGainDb = 0; slider3 = 0; slider_automate(slider3);
+  ) : (
+    draggingOut = 1; dragStartYOut = mouse_y; dragStartValOut = outputGainDb;
+  );
+  lastClickTimeOut = nowT;
+);
+draggingOut && (mouse_cap & 1) ? (
+  outputGainDb = clamp(dragStartValOut + (dragStartYOut - mouse_y) * 0.3, -24, 24);
+  slider3 = outputGainDb; slider_automate(slider3);
+);
+overOut && mouse_wheel != 0 ? (
+  outputGainDb = clamp(outputGainDb + (mouse_wheel/120)*0.5, -24, 24);
+  slider3 = outputGainDb; slider_automate(slider3);
+  mouse_wheel = 0;
+);
+
+gfx_r=0.11; gfx_g=0.12; gfx_b=0.12; gfx_a=1;
+gfx_circle(outCx, rowY, smallR, 1, 1);
+outVal01 = (outputGainDb+24)/48;
+drawKnobArc(outCx, rowY, smallR+8, outVal01);
+gfx_setfont(5); gfx_r=0.85; gfx_g=0.9; gfx_b=0.87;
+gfx_x=outCx-18; gfx_y=rowY-8;
+gfx_drawstr(sprintf(#ogv,"%+.1f",outputGainDb), 1|4, outCx+18, rowY+8);
+gfx_setfont(3); gfx_r=0.4; gfx_g=0.44; gfx_b=0.42;
+gfx_x=outCx-20; gfx_y=rowY+smallR+16;
+gfx_drawstr("OUT GAIN", 1, outCx+20, rowY+smallR+28);
+
+// ---- Auto Gain switch ----
+swW=52; swH=22; swX=knobCx-swW*0.5; swY=rowY-swH*0.5;
+overSwitch = mouse_x>=swX && mouse_x<=swX+swW && mouse_y>=swY && mouse_y<=swY+swH;
+
+clickEdge && overSwitch ? (
+  autoGainOn = autoGainOn > 0.5 ? 0 : 1;
+  slider4 = autoGainOn; slider_automate(slider4);
+);
+
+gfx_r = autoGainOn > 0.5 ? 0.14 : 0.10;
+gfx_g = autoGainOn > 0.5 ? 0.22 : 0.10;
+gfx_b = autoGainOn > 0.5 ? 0.18 : 0.10;
+gfx_a=1;
+swHl = 22;
+swRad = swHl*0.5;
+gfx_circle(swX+swRad, swY+swRad, swRad, 1, 1);
+gfx_circle(swX+swW-swRad, swY+swRad, swRad, 1, 1);
+gfx_rect(swX+swRad, swY, swW-2*swRad, swHl);
+gfx_r = autoGainOn > 0.5 ? 0.23 : 0.3; gfx_g = autoGainOn > 0.5 ? 0.85 : 0.3; gfx_b = autoGainOn > 0.5 ? 0.62 : 0.3;
+gfx_a = autoGainOn > 0.5 ? 1 : 0.4;
+knobX = autoGainOn > 0.5 ? swX+swW-swHl+3 : swX+3;
+gfx_circle(knobX+ (swHl-6)*0.5, swY+swHl*0.5, (swHl-6)*0.5, 1, 1);
+
+gfx_setfont(3); gfx_r=0.4; gfx_g=0.44; gfx_b=0.42;
+gfx_x=swX-30; gfx_y=swY+swHl+10;
+gfx_drawstr("AUTO GAIN", 1, swX+swW+30, swY+swHl+22);
+
+lastCap = mouse_cap & 1;
